@@ -1,0 +1,61 @@
+name: Build EkkoHand.app
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'agent.py'
+      - 'mac/**'
+      - '.github/workflows/build.yml'
+    tags:
+      - 'ekkohand-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyobjc-framework-Cocoa rumps pyinstaller
+
+      - name: Build .app
+        working-directory: mac
+        run: |
+          pyinstaller --noconfirm --clean EkkoHand.spec
+          codesign --force --deep --sign - --identifier cv.backpeng.ekkohand dist/EkkoHand.app
+          ditto -c -k --keepParent dist/EkkoHand.app dist/EkkoHand-macOS.zip
+          shasum -a 256 dist/EkkoHand-macOS.zip | tee dist/SHA256.txt
+          ls -lh dist/EkkoHand-macOS.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EkkoHand-macOS
+          path: |
+            mac/dist/EkkoHand-macOS.zip
+            mac/dist/SHA256.txt
+          retention-days: 30
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/ekkohand-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            mac/dist/EkkoHand-macOS.zip
+            mac/dist/SHA256.txt
+          generate_release_notes: true
+          body: |
+            macOS 菜单栏客户端（arm64，ad-hoc 签名）。
+
+            安装：解压 → 把 EkkoHand.app 拖进「应用程序」→ 双击 →
+            菜单栏出现 EH → 输入工作台生成的 6 位配对码。
