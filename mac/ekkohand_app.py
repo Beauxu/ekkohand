@@ -78,7 +78,7 @@ class EkkoHandApp(rumps.App):
         if not self.state.get("token"):
             self.status_item.title = "○ 未配对"
             self.device_item.title = "设备：—"
-            self.title = "EH"
+            self.title = "EH?"  # 带问号：提示还需要配对
             return
         name = self.state.get("name") or platform.node()
         self.device_item.title = f"设备：{name}"
@@ -252,7 +252,12 @@ class EkkoHandApp(rumps.App):
 def main() -> None:
     app = EkkoHandApp()
     if not app.state.get("token"):
-        rumps.Timer(lambda _t: app.act_pair(None), 1).start()  # 首启直接引导配对
+        # 首启弹一次配对窗；用户点取消就安静待在菜单栏，绝不重复弹
+        def _ask_once(timer) -> None:
+            timer.stop()
+            app.act_pair(None)
+
+        rumps.Timer(_ask_once, 0.8).start()
     app.run()
 
 
