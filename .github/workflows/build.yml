@@ -39,6 +39,7 @@ jobs:
           CERT_P12: ${{ secrets.BACKON_CERT_P12 }}
           CERT_PASSWORD: ${{ secrets.BACKON_CERT_PASSWORD }}
         run: |
+          exec > >(tee -a "$RUNNER_TEMP/ci.log") 2>&1
           set -e
           if [ -z "$CERT_P12" ]; then
             echo "SIGN_IDENTITY=ad-hoc" >> "$GITHUB_ENV"
@@ -64,6 +65,7 @@ jobs:
       - name: Build .app
         working-directory: mac
         run: |
+          exec > >(tee -a "$RUNNER_TEMP/ci.log") 2>&1
           set -e
           pyinstaller --noconfirm --clean Backon.spec
           if [ "$SIGN_IDENTITY" = "ad-hoc" ]; then
@@ -80,6 +82,7 @@ jobs:
 
       - name: Verify bundle（CA 证书必须在包内）
         run: |
+          exec > >(tee -a "$RUNNER_TEMP/ci.log") 2>&1
           if [ ! -f mac/dist/Backon.app/Contents/Frameworks/certifi/cacert.pem ]; then
             echo "::error::打包缺 CA 证书，https 会 CERTIFICATE_VERIFY_FAILED"
             find mac/dist -name "cacert.pem" || true
@@ -94,6 +97,23 @@ jobs:
             mac/dist/Backon-macOS.zip
             mac/dist/SHA256.txt
           retention-days: 30
+
+
+      - name: Push diagnostics
+        if: always()
+        run: |
+          mkdir -p ci-logs
+          {
+            echo "job status: ${{ job.status }}"
+            echo "SIGN_IDENTITY=${SIGN_IDENTITY:-unset}"
+            echo "--- log tail ---"
+            sed -E 's/[A-Za-z0-9+/=]{80,}/<redacted>/g' "$RUNNER_TEMP/ci.log" 2>/dev/null | tail -150
+          } > ci-logs/last.log
+          git config user.email ci@local
+          git config user.name ci
+          git add -f ci-logs/last.log
+          git commit -m "ci: diagnostics" || true
+          git push origin HEAD:refs/heads/ci-log --force
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
