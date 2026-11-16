@@ -45,7 +45,7 @@ MENUBAR_ICON = _res("MenuBar.png")
 DEFAULT_HUB = os.environ.get("HAND_HUB_URL", "http://47.88.53.79/hand")
 LOGIN_AGENT = os.path.expanduser("~/Library/LaunchAgents/cv.backpeng.backon.plist")
 BUNDLE_ID = "cv.backpeng.backon"
-APP_VERSION = "1.1.6"
+APP_VERSION = "1.1.7"
 LEGACY_AGENT_PLIST = os.path.expanduser("~/Library/LaunchAgents/cv.backpeng.ekkohand.plist")
 
 
@@ -92,9 +92,26 @@ def request_screen_capture() -> bool | None:
         return None
 
 
+def _ax_api(name: str):
+    """辅助功能 API 不在 Quartz 里，在 ApplicationServices / HIServices。
+
+    v1.1.6 之前只查 Quartz → getattr 拿不到 AXIsProcessTrusted → 永远返回 None，
+    于是「权限识别不到」这个假象一直存在（屏幕录制却因为 CGPreflightScreenCaptureAccess
+    确实在 Quartz 里而正常显示 True）。这是两个独立 bug 之一。
+    """
+    for modname in ("ApplicationServices", "HIServices", "Quartz"):
+        try:
+            mod = __import__(modname)
+        except Exception:  # noqa: BLE001
+            continue
+        fn = getattr(mod, name, None)
+        if fn is not None:
+            return fn, mod
+    return None, None
+
+
 def accessibility_allowed() -> bool | None:
-    q = _quartz()
-    fn = getattr(q, "AXIsProcessTrusted", None) if q else None
+    fn, _mod = _ax_api("AXIsProcessTrusted")
     if fn is None:
         return None
     try:
@@ -107,19 +124,10 @@ def request_accessibility() -> bool | None:
     """向系统「请求」辅助功能授权。
 
     只调 AXIsProcessTrusted() 是纯查询，不会让条目出现在列表里；
-    系统要看到 prompt 选项才把当前这个二进制登记进去。之前只打开了设置页，
-    用户在列表里勾到的是旧版本 Backon —— 所以「勾了却不生效」。
+    系统要看到 prompt 选项才把当前这个二进制登记进去。
     """
-    q = _quartz()
-    fn = getattr(q, "AXIsProcessTrustedWithOptions", None) if q else None
-    key = getattr(q, "kAXTrustedCheckOptionPrompt", None) if q else None
-    if fn is None or key is None:
-        try:
-            import ApplicationServices as _as  # noqa: PLC0415
-        except Exception:  # noqa: BLE001
-            return None
-        fn = getattr(_as, "AXIsProcessTrustedWithOptions", None)
-        key = getattr(_as, "kAXTrustedCheckOptionPrompt", None)
+    fn, mod = _ax_api("AXIsProcessTrustedWithOptions")
+    key = getattr(mod, "kAXTrustedCheckOptionPrompt", None) if mod is not None else None
     if fn is None or key is None:
         return None
     try:
@@ -139,6 +147,31 @@ def sign_identity() -> str:
         if line.startswith("Authority="):
             return line.split("=", 1)[1]
     return "ad-hoc"
+
+
+def has_detritus() -> bool:
+    """签名验不过且原因是扩展属性（解压带进来的）时返回 True。"""
+    try:
+        r = subprocess.run(["codesign", "--verify", "--deep", "--strict", _app_path()],
+                           capture_output=True, text=True, timeout=10)
+        blob = (r.stderr or "") + (r.stdout or "")
+        return r.returncode != 0 and ("detritus" in blob or "resource fork" in blob)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def fix_detritus() -> str:
+    """清掉 app 包上的扩展属性 —— 这是「签名校验失败」最常见的原因，
+    也是 TCC 不肯把辅助功能授权绑到这个 app 上的原因。"""
+    try:
+        subprocess.run(["xattr", "-cr", _app_path()],
+                       capture_output=True, text=True, timeout=30)
+        subprocess.run(["find", _app_path(), "-name", ".DS_Store", "-delete"],
+                       capture_output=True, text=True, timeout=20)
+        after = verify_signature()
+        return f"已清理扩展属性，重新校验：{after}"
+    except Exception as exc:  # noqa: BLE001
+        return f"清理失败（{type(exc).__name__}: {exc}）"
 
 
 def verify_signature() -> str:
@@ -389,6 +422,11 @@ class BackonApp(rumps.App):
         self.busy = False
         self.pairing = False
         self.err = ""
+        # 启动自愈：解压带进来的扩展属性会让 codesign 校验失败，
+        # 而 TCC 只认验签通过的 app → 勾了辅助功能也不生效。
+        self._detritus_note = ""
+        if has_detritus():
+            self._detritus_note = fix_detritus()
 
         self.status_item = rumps.MenuItem("○ 未配对")
         self.device_item = rumps.MenuItem("设备：—")
@@ -409,6 +447,7 @@ class BackonApp(rumps.App):
             rumps.MenuItem("打开屏幕录制设置…", callback=lambda _: open_privacy("Privacy_ScreenCapture")),
             rumps.MenuItem("打开辅助功能设置…", callback=lambda _: open_privacy("Privacy_Accessibility")),
             rumps.MenuItem("重置并重新请求辅助功能", callback=self.act_fix_ax),
+            rumps.MenuItem("修复签名属性（签名校验失败时用）", callback=self.act_fix_detritus),
             None,
             rumps.MenuItem("开机启动", callback=self.act_login),
             None,
@@ -494,6 +533,14 @@ class BackonApp(rumps.App):
             "勾上后点「重启 Backon（授权后必做）」。",
         )
         open_privacy("Privacy_Accessibility")
+
+    def act_fix_detritus(self, _sender) -> None:
+        if not has_detritus():
+            rumps.alert("签名属性：没问题",
+                        f"当前签名校验：{verify_signature()}\n\n不需要清理。")
+            return
+        result = fix_detritus()
+        rumps.alert("签名属性已清理", result + "\n\n请退出并重新打开 Backon，再勾一次辅助功能。")
 
     def act_fix_ax(self, _sender) -> None:
         """清掉 TCC 里的旧记录再重新请求。
@@ -726,6 +773,7 @@ class BackonApp(rumps.App):
             f"辅助功能：{accessibility_allowed()}",
             f"Quartz 模块：{'已加载' if _quartz() is not None else '缺失（打包问题）'}",
             f"签名校验：{verify_signature()}",
+            *([f"启动自愈：{self._detritus_note}"] if getattr(self, "_detritus_note", "") else []),
             f"证书：{cert_trusted()}",
             f"hub：{self.hub}",
             f"状态：{'已连接' if self.connected else '未连接'}"

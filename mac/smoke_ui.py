@@ -75,6 +75,19 @@ def main() -> int:
     if "class _GuideDragIcon" not in head or "class _GuideCtrl" not in head:
         FAILS.append("引导窗类没在模块顶层定义（会触发 overriding existing Objective-C class）")
 
+    # 辅助功能 API 必须真的能拿到并调用（v1.1.6 只查 Quartz → 永远 None）
+    fn, mod = m._ax_api("AXIsProcessTrusted")
+    if fn is None:
+        FAILS.append("AXIsProcessTrusted 在所有候选模块里都找不到（ApplicationServices/HIServices/Quartz）")
+    else:
+        try:
+            val = fn()
+            print(f"AXIsProcessTrusted() = {val!r} (来自 {mod.__name__})")
+            if not isinstance(val, bool):
+                FAILS.append(f"AXIsProcessTrusted 返回了非 bool：{val!r}")
+        except Exception as exc:  # noqa: BLE001
+            FAILS.append(f"AXIsProcessTrusted 调用抛异常：{type(exc).__name__}: {exc}")
+
     if FAILS:
         print("SMOKE FAILED")
         for f in FAILS:
