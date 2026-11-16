@@ -40,6 +40,13 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install pyobjc-framework-Cocoa pyobjc-framework-Quartz rumps pyinstaller certifi
 
+      - name: UI API smoke test
+        working-directory: mac
+        run: |
+          exec > >(tee -a "$RUNNER_TEMP/ci.log") 2>&1
+          set -e
+          python smoke_ui.py
+
       # 稳定签名身份：ad-hoc 的 designated requirement 是 cdhash，重构建一次
       # 就变一次，TCC（屏幕录制/辅助功能）授权因此反复失效。换成固定证书后
       # DR 变成 identifier + 证书，更新多少次都不用重新授权。

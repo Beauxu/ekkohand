@@ -45,7 +45,7 @@ MENUBAR_ICON = _res("MenuBar.png")
 DEFAULT_HUB = os.environ.get("HAND_HUB_URL", "http://47.88.53.79/hand")
 LOGIN_AGENT = os.path.expanduser("~/Library/LaunchAgents/cv.backpeng.backon.plist")
 BUNDLE_ID = "cv.backpeng.backon"
-APP_VERSION = "1.1.4"
+APP_VERSION = "1.1.5"
 LEGACY_AGENT_PLIST = os.path.expanduser("~/Library/LaunchAgents/cv.backpeng.ekkohand.plist")
 
 
@@ -323,7 +323,15 @@ def _open_perm_guide(kind: str) -> None:
     _GUIDE_KEEP.append(ctrl)
     _GUIDE_KEEP.append(panel)
 
-    NSApp.activateWithOptions_(2)  # NSApplicationActivateIgnoringOtherApps
+    # NSApplication 上没有 activateWithOptions:（那是 NSRunningApplication 的方法），
+    # 只有 activateIgnoringOtherApps:（旧）与 activate()（macOS 14+）。
+    try:
+        NSApp.activateIgnoringOtherApps_(True)
+    except Exception:  # noqa: BLE001
+        try:
+            NSApp.activate()
+        except Exception:  # noqa: BLE001
+            pass
     panel.makeKeyAndOrderFront_(None)
     open_privacy(pane)
     if is_ax:
