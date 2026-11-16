@@ -38,7 +38,8 @@ def main() -> int:
 
     panel = AppKit.NSPanel.alloc()
     for name in ("initWithContentRect_styleMask_backing_defer_", "setFloatingPanel_",
-                 "setLevel_", "setReleasedWhenClosed_", "contentView", "setTitle_",
+                 "setLevel_", "setReleasedWhenClosed_", "setHidesOnDeactivate_",
+                 "contentView", "setTitle_",
                  "makeKeyAndOrderFront_", "setDelegate_", "center"):
         need(panel, name, "NSPanel")
 

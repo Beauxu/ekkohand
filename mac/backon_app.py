@@ -45,7 +45,7 @@ MENUBAR_ICON = _res("MenuBar.png")
 DEFAULT_HUB = os.environ.get("HAND_HUB_URL", "http://47.88.53.79/hand")
 LOGIN_AGENT = os.path.expanduser("~/Library/LaunchAgents/cv.backpeng.backon.plist")
 BUNDLE_ID = "cv.backpeng.backon"
-APP_VERSION = "1.1.5"
+APP_VERSION = "1.1.6"
 LEGACY_AGENT_PLIST = os.path.expanduser("~/Library/LaunchAgents/cv.backpeng.ekkohand.plist")
 
 
@@ -139,6 +139,29 @@ def sign_identity() -> str:
         if line.startswith("Authority="):
             return line.split("=", 1)[1]
     return "ad-hoc"
+
+
+def verify_signature() -> str:
+    """签名完整性（证书是否真的签上了）。TCC 只认能验签的 app。"""
+    try:
+        r = subprocess.run(["codesign", "--verify", "--deep", "--strict", _app_path()],
+                           capture_output=True, text=True, timeout=10)
+        if r.returncode == 0:
+            return "通过"
+        msg = (r.stderr or r.stdout or "").strip().splitlines()
+        return "失败（" + (msg[0][:120] if msg else "未知") + "）"
+    except Exception as exc:  # noqa: BLE001
+        return f"无法检查（{type(exc).__name__}）"
+
+
+def cert_trusted() -> str:
+    """证书是否在钥匙串里（导入过且信任，TCC 才会稳定记住授权）。"""
+    try:
+        r = subprocess.run(["security", "find-certificate", "-c", "Backon Code Signing"],
+                           capture_output=True, text=True, timeout=8)
+        return "已导入钥匙串" if r.returncode == 0 else "钥匙串里找不到（需双击 backon-cert.crt 导入并设为始终信任）"
+    except Exception:  # noqa: BLE001
+        return "无法检查"
 
 
 def probe_screen_capture() -> tuple[bool, str]:
@@ -262,6 +285,9 @@ def _open_perm_guide(kind: str) -> None:
     panel.setFloatingPanel_(True)
     panel.setLevel_(5)
     panel.setReleasedWhenClosed_(False)
+    # NSPanel 默认 hidesOnDeactivate=YES：一打开系统设置，Backon 失去前台焦点，
+    # 窗口立刻被隐藏 —— 这就是「闪一下就消失」。必须显式关掉。
+    panel.setHidesOnDeactivate_(False)
     panel.center()
     v = panel.contentView()
 
@@ -699,6 +725,8 @@ class BackonApp(rumps.App):
             f"屏幕录制：{screen_capture_allowed()}",
             f"辅助功能：{accessibility_allowed()}",
             f"Quartz 模块：{'已加载' if _quartz() is not None else '缺失（打包问题）'}",
+            f"签名校验：{verify_signature()}",
+            f"证书：{cert_trusted()}",
             f"hub：{self.hub}",
             f"状态：{'已连接' if self.connected else '未连接'}"
             + (f"（{self.err}）" if self.err else ""),
