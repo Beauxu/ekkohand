@@ -1,4 +1,4 @@
-# EkkoHand（macOS 菜单栏 App）
+# Backon（macOS 菜单栏 App）
 
 把 [../agent.py](../agent.py) 包成常驻应用，让 Ekko 能用你这台 Mac 当「手」。
 
@@ -17,16 +17,16 @@ bash build_app.sh          # 首次会自动建 venv 并装 pyobjc / rumps / pyi
 ```
 
 产物：
-- `dist/EkkoHand.app`
-- `dist/EkkoHand-macOS.zip`（可分发，内部已 ad-hoc 签名）
+- `dist/Backon.app`
+- `dist/Backon-macOS.zip`（可分发，内部已 ad-hoc 签名）
 
 ## 安装与配对
 
-1. 把 `EkkoHand.app` 拖进「应用程序」
+1. 把 `Backon.app` 拖进「应用程序」
 2. 双击打开 → 菜单栏出现 `EH`
 3. 首次会直接弹配对窗口；没弹就点图标 →「输入配对码…」
 4. 在工作台 https://work.backpeng.com 「设备」页生成 6 位码，粘进去
-5. 连接成功后建议点「开机启动」，并在两项系统授权里勾上 EkkoHand
+5. 连接成功后建议点「开机启动」，并在两项系统授权里勾上 Backon
 
 ## 已知限制
 

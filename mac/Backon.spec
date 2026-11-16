@@ -1,9 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller 打包配置：EkkoHand.app（菜单栏常驻，无 Dock 图标）。
+"""PyInstaller 打包配置：Backon.app（菜单栏常驻，无 Dock 图标）。
 
 在 Mac 上执行：
     bash build_app.sh
-产物：dist/EkkoHand.app 与 dist/EkkoHand-macOS.zip
+产物：dist/Backon.app 与 dist/Backon-macOS.zip
 """
 try:
     import certifi
@@ -15,7 +15,7 @@ except Exception:
     _certifi_datas = []
 
 a = Analysis(
-    ['ekkohand_app.py'],
+    ['backon_app.py'],
     pathex=['..'],          # ../agent.py
     binaries=[],
     datas=[('assets/MenuBar.png', '.'), ('assets/MenuBar@2x.png', '.')] + _certifi_datas,
@@ -31,7 +31,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='EkkoHand',
+    name='Backon',
     debug=False,
     strip=False,
     upx=False,
@@ -44,21 +44,21 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name='EkkoHand',
+    name='Backon',
 )
 app = BUNDLE(
     coll,
-    name='EkkoHand.app',
+    name='Backon.app',
     icon='assets/AppIcon.icns',
-    bundle_identifier='cv.backpeng.ekkohand',
+    bundle_identifier='cv.backpeng.backon',
     info_plist={
-        'CFBundleName': 'EkkoHand',
-        'CFBundleDisplayName': 'EkkoHand',
-        'CFBundleShortVersionString': '1.0.4',
-        'CFBundleVersion': '4',
+        'CFBundleName': 'Backon',
+        'CFBundleDisplayName': 'Backon',
+        'CFBundleShortVersionString': '1.0.5',
+        'CFBundleVersion': '5',
         'LSUIElement': True,
         'LSMinimumSystemVersion': '11.0',
         'NSHighResolutionCapable': True,
-        'NSAppleEventsUsageDescription': 'EkkoHand 需要通过系统事件操作其他应用。',
+        'NSAppleEventsUsageDescription': 'Backon 需要通过系统事件操作其他应用。',
     },
 )

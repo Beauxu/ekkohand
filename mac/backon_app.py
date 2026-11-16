@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""EkkoHand 菜单栏 App —— 把 agent.py 包成 macOS 常驻应用。
+"""Backon 菜单栏 App —— 把 agent.py 包成 macOS 常驻应用。
 
 设计约束
 - 无 Dock 图标（LSUIElement），只在菜单栏有一个状态项
@@ -43,8 +43,9 @@ def _res(name: str) -> str:
 MENUBAR_ICON = _res("MenuBar.png")
 
 DEFAULT_HUB = os.environ.get("HAND_HUB_URL", "https://work.backpeng.com/hand")
-LOGIN_AGENT = os.path.expanduser("~/Library/LaunchAgents/cv.backpeng.ekkohand.plist")
-BUNDLE_ID = "cv.backpeng.ekkohand"
+LOGIN_AGENT = os.path.expanduser("~/Library/LaunchAgents/cv.backpeng.backon.plist")
+BUNDLE_ID = "cv.backpeng.backon"
+LEGACY_AGENT_PLIST = os.path.expanduser("~/Library/LaunchAgents/cv.backpeng.ekkohand.plist")
 
 
 def open_privacy(pane: str) -> None:
@@ -54,10 +55,10 @@ def open_privacy(pane: str) -> None:
     )
 
 
-class EkkoHandApp(rumps.App):
+class BackonApp(rumps.App):
     def __init__(self) -> None:
         super().__init__(
-            "EkkoHand",
+            "Backon",
             title="",
             icon=MENUBAR_ICON or None,
             template=bool(MENUBAR_ICON),
@@ -194,7 +195,7 @@ class EkkoHandApp(rumps.App):
         if self.pairing:
             return
         win = rumps.Window(
-            title="配对 EkkoHand",
+            title="配对 Backon",
             message="在工作台「设备」页生成 6 位配对码，粘贴到这里：\n\n"
                     "不想配对就直接点「取消」——本程序会安静待在菜单栏，"
                     "随时可从菜单点「退出」关掉它。",
@@ -237,7 +238,7 @@ class EkkoHandApp(rumps.App):
             self.err = ""
             self.refresh()
             self._ui(lambda: rumps.notification(
-                "EkkoHand", "配对成功", f"设备名：{state.get('name')}"))
+                "Backon", "配对成功", f"设备名：{state.get('name')}"))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -252,7 +253,7 @@ class EkkoHandApp(rumps.App):
         else:
             rumps.alert(
                 "自检失败",
-                f"{err}\n\n请在「屏幕录制权限…」里勾上 EkkoHand，然后退出重开本程序。",
+                f"{err}\n\n请在「屏幕录制权限…」里勾上 Backon，然后退出重开本程序。",
             )
 
     def act_diag(self, _sender) -> None:
@@ -279,7 +280,7 @@ class EkkoHandApp(rumps.App):
             subprocess.run(["launchctl", "unload", LOGIN_AGENT], check=False)
             os.remove(LOGIN_AGENT)
             sender.state = 0
-            rumps.notification("EkkoHand", "已取消开机启动", "")
+            rumps.notification("Backon", "已取消开机启动", "")
             return
         exe = self._app_exec()
         os.makedirs(os.path.dirname(LOGIN_AGENT), exist_ok=True)
@@ -293,18 +294,18 @@ class EkkoHandApp(rumps.App):
             plistlib.dump(payload, fh)
         subprocess.run(["launchctl", "load", LOGIN_AGENT], check=False)
         sender.state = 1
-        rumps.notification("EkkoHand", "已加入开机启动", "")
+        rumps.notification("Backon", "已加入开机启动", "")
 
     @staticmethod
     def _app_exec() -> str:
-        # 打包后在 .app/Contents/MacOS/EkkoHand；直接跑脚本时退回 python
+        # 打包后在 .app/Contents/MacOS/Backon；直接跑脚本时退回 python
         if getattr(sys, "frozen", False):
             return sys.executable
-        return f"{sys.executable} {os.path.join(HERE, 'ekkohand_app.py')}"
+        return f"{sys.executable} {os.path.join(HERE, 'backon_app.py')}"
 
 
 def main() -> None:
-    app = EkkoHandApp()
+    app = BackonApp()
     if not app.state.get("token"):
         # 首启弹一次配对窗；用户点取消就安静待在菜单栏，绝不重复弹
         def _ask_once(timer) -> None:

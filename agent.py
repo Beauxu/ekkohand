@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""EkkoHand agent — 装在用户自己电脑上的「手」。
+"""Backon agent — 装在用户自己电脑上的「手」。
 
 单文件、**零第三方依赖**（只用标准库 + 系统自带截屏命令），Mac / Linux 同一份。
 
@@ -39,15 +39,16 @@ import urllib.error
 import urllib.request
 
 DEFAULT_HUB = os.environ.get("HAND_HUB_URL", "http://127.0.0.1:8770")
-DEFAULT_STATE = os.path.expanduser("~/.ekkohand/device.json")
+DEFAULT_STATE = os.path.expanduser("~/.backon/device.json")
+LEGACY_STATE = os.path.expanduser("~/.ekkohand/device.json")  # 旧名时期的位置，只读兼容
 STATE_PATH = DEFAULT_STATE
 POLL_WAIT = 25.0
 
 
 LOG_PATH = (
-    os.path.join(os.path.expanduser("~/Library/Logs"), "EkkoHand.log")
+    os.path.join(os.path.expanduser("~/Library/Logs"), "Backon.log")
     if sys.platform == "darwin"
-    else os.path.join(tempfile.gettempdir(), "ekkohand.log")
+    else os.path.join(tempfile.gettempdir(), "backon.log")
 )
 
 
@@ -430,7 +431,7 @@ def post(base: str, path: str, payload: dict, timeout: float) -> tuple[int, dict
     req = urllib.request.Request(base + path, data=json.dumps(payload).encode(), method="POST",
                                 headers={"Content-Type": "application/json",
                                          "Accept": "application/json",
-                                         "User-Agent": "EkkoHand/0.1 (device agent)"})
+                                         "User-Agent": "Backon/1.0.5 (device agent)"})
     kwargs = {"timeout": timeout}
     if base.lower().startswith("https"):
         kwargs["context"] = ssl_context()
@@ -453,11 +454,16 @@ def post(base: str, path: str, payload: dict, timeout: float) -> tuple[int, dict
 
 
 def load_state() -> dict:
-    try:
-        with open(STATE_PATH, "r", encoding="utf-8") as fh:
-            return json.load(fh)
-    except (OSError, ValueError):
-        return {}
+    for path in (STATE_PATH, LEGACY_STATE):
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                state = json.load(fh)
+            if path == LEGACY_STATE:
+                log(f"沿用旧目录的配对信息：{path}")
+            return state
+        except (OSError, ValueError):
+            continue
+    return {}
 
 
 def save_state(state: dict) -> None:
@@ -487,19 +493,19 @@ def selftest() -> None:
     raw = grab_png()
     data, scaled = scale_png(raw, 1024)
     w, h = png_size(data)
-    out = os.path.join(tempfile.gettempdir(), "ekkohand-selftest.png")
+    out = os.path.join(tempfile.gettempdir(), "backon-selftest.png")
     with open(out, "wb") as fh:
         fh.write(data)
     log(f"截屏 OK：{w}×{h}，{len(raw)} → {len(data)} 字节，scaled={scaled}，已存 {out}")
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="EkkoHand — 把自己这台机器交给 Ekko 当手")
+    ap = argparse.ArgumentParser(description="Backon — 把自己这台机器交给工作台当手")
     ap.add_argument("--hub", default=None, help="hub 地址，默认用配对时记录的地址")
     ap.add_argument("--pair", default=None, help="6 位配对码（首次配对）")
     ap.add_argument("--name", default=None, help="设备名，默认主机名")
     ap.add_argument("--selftest", action="store_true", help="只截一张图自检，不连 hub")
-    ap.add_argument("--state", default=None, help="令牌/配置存放路径，默认 ~/.ekkohand/device.json")
+    ap.add_argument("--state", default=None, help="令牌/配置存放路径，默认 ~/.backon/device.json")
     args = ap.parse_args()
     global STATE_PATH
     if args.state:
