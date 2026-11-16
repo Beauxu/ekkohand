@@ -84,7 +84,8 @@ jobs:
           git config user.name ci
           git add -f ci-logs
           git commit -m "ci: windows diagnostics" || true
-          git push origin HEAD:refs/heads/ci-log --force || true
+          # 独立分支：和 mac/android 的 ci-log 分开，避免互相 force push 覆盖
+          git push origin HEAD:refs/heads/ci-log-win --force || true
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
