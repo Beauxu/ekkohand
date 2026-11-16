@@ -38,7 +38,7 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pyobjc-framework-Cocoa rumps pyinstaller certifi
+          python -m pip install pyobjc-framework-Cocoa pyobjc-framework-Quartz rumps pyinstaller certifi
 
       # 稳定签名身份：ad-hoc 的 designated requirement 是 cdhash，重构建一次
       # 就变一次，TCC（屏幕录制/辅助功能）授权因此反复失效。换成固定证书后
@@ -107,6 +107,11 @@ jobs:
             exit 1
           fi
           ls -lh mac/dist/Backon.app/Contents/Frameworks/certifi/
+          if [ ! -d mac/dist/Backon.app/Contents/Frameworks/Quartz ]; then
+            echo "::error::Quartz 没被打进包里，权限自检会全部显示 None"
+            exit 1
+          fi
+
 
       - uses: actions/upload-artifact@v4
         with:
