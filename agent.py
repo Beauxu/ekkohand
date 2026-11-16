@@ -38,7 +38,7 @@ import time
 import urllib.error
 import urllib.request
 
-DEFAULT_HUB = os.environ.get("HAND_HUB_URL", "http://47.88.53.79/hand")
+DEFAULT_HUB = os.environ.get("HAND_HUB_URL", "https://47.88.53.79/hand")
 DEFAULT_STATE = os.path.expanduser("~/.backon/device.json")
 LEGACY_STATE = os.path.expanduser("~/.ekkohand/device.json")  # 旧名时期的位置，只读兼容
 STATE_PATH = DEFAULT_STATE
@@ -431,7 +431,7 @@ def post(base: str, path: str, payload: dict, timeout: float) -> tuple[int, dict
     req = urllib.request.Request(base + path, data=json.dumps(payload).encode(), method="POST",
                                 headers={"Content-Type": "application/json",
                                          "Accept": "application/json",
-                                         "User-Agent": "Backon/1.0.5 (device agent)"})
+                                         "User-Agent": "Backon/1.0.7 (device agent)"})
     kwargs = {"timeout": timeout}
     if base.lower().startswith("https"):
         kwargs["context"] = ssl_context()

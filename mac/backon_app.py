@@ -42,7 +42,7 @@ def _res(name: str) -> str:
 
 MENUBAR_ICON = _res("MenuBar.png")
 
-DEFAULT_HUB = os.environ.get("HAND_HUB_URL", "http://47.88.53.79/hand")
+DEFAULT_HUB = os.environ.get("HAND_HUB_URL", "https://47.88.53.79/hand")
 LOGIN_AGENT = os.path.expanduser("~/Library/LaunchAgents/cv.backpeng.backon.plist")
 BUNDLE_ID = "cv.backpeng.backon"
 LEGACY_AGENT_PLIST = os.path.expanduser("~/Library/LaunchAgents/cv.backpeng.ekkohand.plist")
@@ -83,6 +83,7 @@ class BackonApp(rumps.App):
             self.device_item,
             None,
             rumps.MenuItem("输入配对码…", callback=self.act_pair),
+            rumps.MenuItem("断开连接…", callback=self.act_disconnect),
             rumps.MenuItem("自检截图", callback=self.act_selftest),
             rumps.MenuItem("连接诊断", callback=self.act_diag),
             None,
@@ -127,13 +128,19 @@ class BackonApp(rumps.App):
             if not self.state.get("token"):
                 time.sleep(2)
                 continue
+            # 本轮使用的地址与凭据取快照：用户可能在轮询途中点「断开连接」，
+            # 那样 self.state 会被清空，直接读会造成 KeyError 或上报到错误的 hub。
+            hub, tok, dev = self.hub, self.state.get("token"), self.state.get("device_id")
+            if not tok or not dev:
+                time.sleep(1)
+                continue
             try:
                 status, body = agent.post(
-                    self.hub,
+                    hub,
                     "/poll",
                     {
-                        "device_id": self.state["device_id"],
-                        "token": self.state["token"],
+                        "device_id": dev,
+                        "token": tok,
                         "wait": agent.POLL_WAIT,
                     },
                     agent.POLL_WAIT + 10,
@@ -146,6 +153,10 @@ class BackonApp(rumps.App):
                     self.refresh()
                     continue
                 if status == 401:
+                    if self.state.get("token") != tok:
+                        # 是我们自己刚断开的，安静退场，别报「配对已失效」
+                        time.sleep(2)
+                        continue
                     self.connected = False
                     self.err = "配对已失效，需重新配对"
                     self.state = {}
@@ -162,15 +173,18 @@ class BackonApp(rumps.App):
 
                 task_id = body.get("task_id")
                 method = body.get("method") or ""
+                if self.state.get("token") != tok:
+                    # 任务到手前后用户点了「断开连接」：直接丢弃，不上报
+                    continue
                 self.busy = True
                 self.refresh()
                 ok, result, err = agent.run_task(method, body.get("params") or {})
                 agent.post(
-                    self.hub,
+                    hub,
                     "/result",
                     {
-                        "device_id": self.state["device_id"],
-                        "token": self.state["token"],
+                        "device_id": dev,
+                        "token": tok,
                         "task_id": task_id,
                         "ok": ok,
                         "result": result,
@@ -245,6 +259,37 @@ class BackonApp(rumps.App):
                 "Backon", "配对成功", f"设备名：{state.get('name')}"))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def act_disconnect(self, _sender) -> None:
+        """清掉本机配对信息，回到未配对状态。
+
+        只动本地：服务端的设备记录保留，重新配对时会复用同一台设备（fingerprint 不变）。
+        """
+        token = self.state.get("token")
+        if not token:
+            rumps.alert("尚未配对", "当前没有配对信息，不需要断开。\n\n"
+                                  "想连上就点「输入配对码…」。")
+            return
+        name = self.state.get("name") or platform.node()
+        if not rumps.alert(
+            title="断开连接？",
+            message=(f"将清除本机保存的配对信息（设备：{name}）。\n\n"
+                     f"服务端的设备列表不受影响，重新配对会复用同一台设备。\n"
+                     f"断开后本程序继续待在菜单栏，随时可点「输入配对码…」重连。\n\n"
+                     f"下次配对使用的入口：{DEFAULT_HUB}"),
+            ok="断开", cancel="取消",
+        ):
+            return
+        # 先清内存凭据，让轮询线程下一轮就停下，再落盘
+        self.state = {}
+        self.hub = DEFAULT_HUB.rstrip("/")
+        self.connected = False
+        self.busy = False
+        self.last_seen = 0.0
+        self.err = ""
+        agent.save_state({})
+        self.refresh()
+        rumps.notification("Backon", "已断开连接", "本机配对信息已清除")
 
     def act_selftest(self, _sender) -> None:
         ok, result, err = agent.run_task("screenshot", {"max_edge": 0})
