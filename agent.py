@@ -30,6 +30,7 @@ import platform
 import re
 import shutil
 import socket
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -43,9 +44,23 @@ STATE_PATH = DEFAULT_STATE
 POLL_WAIT = 25.0
 
 
+LOG_PATH = (
+    os.path.join(os.path.expanduser("~/Library/Logs"), "EkkoHand.log")
+    if sys.platform == "darwin"
+    else os.path.join(tempfile.gettempdir(), "ekkohand.log")
+)
+
+
 def log(msg: str) -> None:
-    sys.stderr.write(time.strftime("%H:%M:%S ") + msg + "\n")
+    line = time.strftime("%Y-%m-%d %H:%M:%S ") + msg
+    sys.stderr.write(line + "\n")
     sys.stderr.flush()
+    try:
+        os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
+        with open(LOG_PATH, "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except OSError:
+        pass
 
 
 def _machine_identity() -> str:
@@ -390,13 +405,37 @@ def run_task(method: str, params: dict) -> tuple[bool, dict, str | None]:
 
 
 # ── HTTP ──────────────────────────────────────────────────────
+_SSL_CTX = None
+
+
+def ssl_context():
+    """PyInstaller 打的包里没有 CA 证书，必须显式指定 certifi 的 bundle。
+
+    否则 macOS 上 https 请求会在握手阶段就以
+    CERTIFICATE_VERIFY_FAILED 失败，请求根本发不出去。
+    """
+    global _SSL_CTX
+    if _SSL_CTX is not None:
+        return _SSL_CTX
+    try:
+        import certifi  # 打包时随包带上
+
+        _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
+    except Exception:  # noqa: BLE001
+        _SSL_CTX = ssl.create_default_context()
+    return _SSL_CTX
+
+
 def post(base: str, path: str, payload: dict, timeout: float) -> tuple[int, dict]:
     req = urllib.request.Request(base + path, data=json.dumps(payload).encode(), method="POST",
                                 headers={"Content-Type": "application/json",
                                          "Accept": "application/json",
                                          "User-Agent": "EkkoHand/0.1 (device agent)"})
+    kwargs = {"timeout": timeout}
+    if base.lower().startswith("https"):
+        kwargs["context"] = ssl_context()
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, **kwargs) as resp:
             raw = resp.read().decode("utf-8", "replace")
             return resp.status, (json.loads(raw) if raw else {})
     except urllib.error.HTTPError as exc:
@@ -405,6 +444,12 @@ def post(base: str, path: str, payload: dict, timeout: float) -> tuple[int, dict
             return exc.code, json.loads(raw)
         except ValueError:
             return exc.code, {"error": raw[:200]}
+    except urllib.error.URLError as exc:
+        log(f"POST {base}{path} 失败：{exc.reason!r}")
+        raise ConnectionError(f"连不上 {base}：{exc.reason}") from exc
+    except ssl.SSLError as exc:
+        log(f"POST {base}{path} TLS 失败：{exc!r}")
+        raise ConnectionError(f"TLS 握手失败（证书问题）：{exc}") from exc
 
 
 def load_state() -> dict:
@@ -429,6 +474,7 @@ def do_pair(base: str, code: str, name: str) -> dict:
     status, body = post(base, "/pair", {"code": code, "name": name,
                                        "fingerprint": fingerprint(), "caps": caps()}, 20)
     if status != 200:
+        log(f"配对被拒：status={status} body={body}")
         raise SystemExit(f"配对失败（{status}）：{body.get('error') or body}")
     state = {"hub": base, "device_id": body["device_id"], "token": body["token"],
              "name": name, "paired_at": int(time.time())}

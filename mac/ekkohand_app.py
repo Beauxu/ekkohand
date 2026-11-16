@@ -222,10 +222,12 @@ class EkkoHandApp(rumps.App):
                 self.pairing = False
                 self.err = "配对失败"
                 self.refresh()
+                agent.log(f"配对失败：{msg}")
 
                 def show() -> None:
                     rumps.alert("配对失败", f"{msg}\n\n可以再点「输入配对码…」重试，"
-                                         "或者从菜单点「退出」直接关掉本程序。")
+                                         f"或者从菜单点「退出」直接关掉本程序。\n\n"
+                                         f"日志：{agent.LOG_PATH}")
                 self._ui(show)
                 return
             self.state = state

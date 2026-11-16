@@ -27,7 +27,7 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pyobjc-framework-Cocoa rumps pyinstaller
+          python -m pip install pyobjc-framework-Cocoa rumps pyinstaller certifi
 
       - name: Build .app
         working-directory: mac
@@ -37,6 +37,15 @@ jobs:
           ditto -c -k --keepParent dist/EkkoHand.app dist/EkkoHand-macOS.zip
           shasum -a 256 dist/EkkoHand-macOS.zip | tee dist/SHA256.txt
           ls -lh dist/EkkoHand-macOS.zip
+
+      - name: Verify bundle（CA 证书必须在包内）
+        run: |
+          if [ ! -f mac/dist/EkkoHand.app/Contents/Frameworks/certifi/cacert.pem ]; then
+            echo "::error::打包缺 CA 证书，https 会 CERTIFICATE_VERIFY_FAILED"
+            find mac/dist -name "cacert.pem" || true
+            exit 1
+          fi
+          ls -lh mac/dist/EkkoHand.app/Contents/Frameworks/certifi/
 
       - uses: actions/upload-artifact@v4
         with:

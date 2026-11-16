@@ -5,12 +5,21 @@
     bash build_app.sh
 产物：dist/EkkoHand.app 与 dist/EkkoHand-macOS.zip
 """
+try:
+    import certifi
+
+    # PyInstaller 的 hook 有时收集不到 certifi 的数据文件，显式带上，
+    # 否则 macOS 上 https 会 CERTIFICATE_VERIFY_FAILED（配对必然失败）。
+    _certifi_datas = [(certifi.where(), 'certifi')]
+except Exception:
+    _certifi_datas = []
+
 a = Analysis(
     ['ekkohand_app.py'],
     pathex=['..'],          # ../agent.py
     binaries=[],
-    datas=[('assets/MenuBar.png', '.'), ('assets/MenuBar@2x.png', '.')],
-    hiddenimports=['agent', 'rumps', 'Quartz', 'AppKit', 'Foundation'],
+    datas=[('assets/MenuBar.png', '.'), ('assets/MenuBar@2x.png', '.')] + _certifi_datas,
+    hiddenimports=['agent', 'rumps', 'Quartz', 'AppKit', 'Foundation', 'certifi'],
     hookspath=[],
     runtime_hooks=[],
     excludes=['tkinter', 'unittest', 'pydoc'],
@@ -45,8 +54,8 @@ app = BUNDLE(
     info_plist={
         'CFBundleName': 'EkkoHand',
         'CFBundleDisplayName': 'EkkoHand',
-        'CFBundleShortVersionString': '1.0.3',
-        'CFBundleVersion': '3',
+        'CFBundleShortVersionString': '1.0.4',
+        'CFBundleVersion': '4',
         'LSUIElement': True,
         'LSMinimumSystemVersion': '11.0',
         'NSHighResolutionCapable': True,
