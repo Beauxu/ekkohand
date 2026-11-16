@@ -43,13 +43,20 @@ DEFAULT_STATE = os.path.expanduser("~/.backon/device.json")
 LEGACY_STATE = os.path.expanduser("~/.ekkohand/device.json")  # 旧名时期的位置，只读兼容
 STATE_PATH = DEFAULT_STATE
 POLL_WAIT = 25.0
+# 心跳里上报的版本号：CI 打包时用 BACKON_VERSION 注入 tag，本地跑就用默认值。
+APP_VERSION = os.environ.get("BACKON_VERSION") or "1.1.8"
 
 
-LOG_PATH = (
-    os.path.join(os.path.expanduser("~/Library/Logs"), "Backon.log")
-    if sys.platform == "darwin"
-    else os.path.join(tempfile.gettempdir(), "backon.log")
-)
+def _default_log_path() -> str:
+    if sys.platform == "darwin":
+        return os.path.join(os.path.expanduser("~/Library/Logs"), "Backon.log")
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~/AppData/Local")
+        return os.path.join(base, "Backon", "Backon.log")
+    return os.path.join(tempfile.gettempdir(), "backon.log")
+
+
+LOG_PATH = _default_log_path()
 
 
 def log(msg: str) -> None:
@@ -192,6 +199,156 @@ _KEYCODES_MAC = {
 _MODS_MAC = {"cmd": 55, "command": 55, "shift": 56, "alt": 58, "option": 58,
              "ctrl": 59, "control": 59, "fn": 63}
 
+# ── Windows 输入注入 ─────────────────────────────────────────
+# 直接调 user32.SendInput：不依赖 pyautogui / pywinauto，打包体积和运行时都小。
+_WIN_VK = {
+    "return": 0x0D, "enter": 0x0D, "tab": 0x09, "space": 0x20,
+    "escape": 0x1B, "esc": 0x1B, "delete": 0x08, "backspace": 0x08,
+    "forwarddelete": 0x2E, "insert": 0x2D, "capslock": 0x14,
+    "printscreen": 0x2C, "pause": 0x13,
+    "left": 0x25, "up": 0x26, "right": 0x27, "down": 0x28,
+    "home": 0x24, "end": 0x23, "pageup": 0x21, "pagedown": 0x22,
+    "f1": 0x70, "f2": 0x71, "f3": 0x72, "f4": 0x73, "f5": 0x74, "f6": 0x75,
+    "f7": 0x76, "f8": 0x77, "f9": 0x78, "f10": 0x79, "f11": 0x7A, "f12": 0x7B,
+}
+_WIN_MODS = {"cmd": 0x5B, "command": 0x5B, "win": 0x5B, "super": 0x5B,
+             "shift": 0x10, "alt": 0x12, "option": 0x12,
+             "ctrl": 0x11, "control": 0x11}
+
+
+class _WinInput:
+    """Windows 鼠标/键盘注入（SendInput）。坐标按虚拟桌面归一化，多屏也对得上。
+
+    截图走 ImageGrab(all_screens=True)，坐标原点同样是虚拟桌面左上角，
+    所以模型看图和点坐标是同一套坐标系。
+    """
+
+    INPUT_MOUSE = 0
+    INPUT_KEYBOARD = 1
+    MOVE, DOWN, UP, WHEEL = 0x0001, 0x0002, 0x0004, 0x0800
+    ABSOLUTE, VIRTUALDESK = 0x8000, 0x4000
+    KEYUP, UNICODE = 0x0002, 0x0004
+
+    def __init__(self) -> None:
+        import ctypes
+        from ctypes import wintypes
+
+        ulong_ptr = ctypes.c_size_t
+
+        class MOUSEINPUT(ctypes.Structure):
+            _fields_ = [("dx", wintypes.LONG), ("dy", wintypes.LONG),
+                        ("mouseData", wintypes.DWORD), ("dwFlags", wintypes.DWORD),
+                        ("time", wintypes.DWORD), ("dwExtraInfo", ulong_ptr)]
+
+        class KEYBDINPUT(ctypes.Structure):
+            _fields_ = [("wVk", wintypes.WORD), ("wScan", wintypes.WORD),
+                        ("dwFlags", wintypes.DWORD), ("time", wintypes.DWORD),
+                        ("dwExtraInfo", ulong_ptr)]
+
+        class HARDWAREINPUT(ctypes.Structure):
+            _fields_ = [("uMsg", wintypes.DWORD), ("wParamL", wintypes.WORD),
+                        ("wParamH", wintypes.WORD)]
+
+        class INPUT(ctypes.Structure):
+            class _U(ctypes.Union):
+                _fields_ = [("mi", MOUSEINPUT), ("ki", KEYBDINPUT), ("hi", HARDWAREINPUT)]
+
+            _anonymous_ = ("u",)
+            _fields_ = [("type", wintypes.DWORD), ("u", _U)]
+
+        self._ct = ctypes
+        self._INPUT, self._MOUSEINPUT, self._KEYBDINPUT = INPUT, MOUSEINPUT, KEYBDINPUT
+        self.user32 = ctypes.WinDLL("user32", use_last_error=True)
+        self.user32.SendInput.argtypes = (wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int)
+        self.user32.SendInput.restype = wintypes.UINT
+
+    def _send(self, *inputs) -> None:
+        batch = (self._INPUT * len(inputs))(*inputs)
+        sent = self.user32.SendInput(len(inputs), batch, self._ct.sizeof(self._INPUT))
+        if sent != len(inputs):
+            err = self._ct.get_last_error()
+            raise RuntimeError(
+                f"SendInput 只送达 {sent}/{len(inputs)}（WinError={err}；"
+                "目标程序以管理员运行时，本程序也需要同样权限）")
+
+    def _mouse(self, flags: int, x: int = 0, y: int = 0, data: int = 0) -> None:
+        inp = self._INPUT()
+        inp.type = self.INPUT_MOUSE
+        inp.mi = self._MOUSEINPUT(x, y, data & 0xFFFFFFFF, flags, 0, 0)
+        self._send(inp)
+
+    def _kb(self, vk: int, flags: int) -> None:
+        inp = self._INPUT()
+        inp.type = self.INPUT_KEYBOARD
+        inp.ki = self._KEYBDINPUT(vk & 0xFFFF, 0, flags, 0, 0)
+        self._send(inp)
+
+    def _norm(self, x: int, y: int) -> tuple[int, int]:
+        u = self.user32
+        vx, vy = u.GetSystemMetrics(76), u.GetSystemMetrics(77)      # 虚拟桌面原点
+        vw, vh = u.GetSystemMetrics(78), u.GetSystemMetrics(79)      # 虚拟桌面尺寸
+        if vw <= 1 or vh <= 1:
+            vw, vh, vx, vy = u.GetSystemMetrics(0), u.GetSystemMetrics(1), 0, 0
+        nx = int(round((x - vx) * 65535 / max(vw - 1, 1)))
+        ny = int(round((y - vy) * 65535 / max(vh - 1, 1)))
+        return max(0, min(nx, 65535)), max(0, min(ny, 65535))
+
+    def click(self, x: int, y: int) -> None:
+        nx, ny = self._norm(x, y)
+        base = self.MOVE | self.ABSOLUTE | self.VIRTUALDESK
+        self._mouse(base, nx, ny)
+        self._mouse(base | self.DOWN, nx, ny)
+        self._mouse(base | self.UP, nx, ny)
+
+    def drag(self, x1: int, y1: int, x2: int, y2: int, steps: int) -> None:
+        base = self.MOVE | self.ABSOLUTE | self.VIRTUALDESK
+        nx, ny = self._norm(x1, y1)
+        self._mouse(base, nx, ny)
+        self._mouse(base | self.DOWN, nx, ny)
+        for i in range(1, steps + 1):
+            mx = int(round(x1 + (x2 - x1) * i / steps))
+            my = int(round(y1 + (y2 - y1) * i / steps))
+            nx, ny = self._norm(mx, my)
+            self._mouse(base, nx, ny)
+            time.sleep(0.012)
+        nx, ny = self._norm(x2, y2)
+        self._mouse(base | self.UP, nx, ny)
+
+    def scroll(self, amount: int) -> None:
+        # 协议：正数向下。Windows 正 delta 向上，所以取负。
+        self._mouse(self.WHEEL, 0, 0, (-120 * amount) & 0xFFFFFFFF)
+
+    def type_text(self, text: str) -> None:
+        data = text.encode("utf-16-le")
+        batch: list = []
+        for i in range(0, len(data), 2):
+            code = int.from_bytes(data[i:i + 2], "little")
+            for flags in (self.UNICODE, self.UNICODE | self.KEYUP):
+                inp = self._INPUT()
+                inp.type = self.INPUT_KEYBOARD
+                inp.ki = self._KEYBDINPUT(0, code, flags, 0, 0)
+                batch.append(inp)
+        for i in range(0, len(batch), 200):     # 一次别塞太多，避免 SendInput 拒绝
+            self._send(*batch[i:i + 200])
+
+    def key(self, vk: int, mods: list[int]) -> None:
+        for m in mods:
+            self._kb(m, 0)
+        self._kb(vk, 0)
+        self._kb(vk, self.KEYUP)
+        for m in reversed(mods):
+            self._kb(m, self.KEYUP)
+
+
+_WIN_INPUT: _WinInput | None = None
+
+
+def _win_input() -> _WinInput:
+    global _WIN_INPUT
+    if _WIN_INPUT is None:
+        _WIN_INPUT = _WinInput()
+    return _WIN_INPUT
+
 
 def _abs(path) -> str:
     raw = str(path or "~").strip() or "~"
@@ -212,6 +369,8 @@ def _input_backend() -> str | None:
             return "quartz"
         except Exception:
             return "osascript" if shutil.which("osascript") else None
+    if platform.system() == "Windows":
+        return "win"          # user32.SendInput，系统自带，无需额外依赖
     if platform.system() == "Linux" and shutil.which("xdotool"):
         return "xdotool"
     return None
@@ -288,10 +447,23 @@ def op_script_run(params: dict) -> dict:
     cwd = _abs(params.get("cwd") or "~")
     if not os.path.isdir(cwd):
         cwd = _abs("~")
-    shell = str(params.get("shell") or ("/bin/zsh" if platform.system() == "Darwin" else "/bin/sh"))
     started = time.time()
-    proc = subprocess.run([shell, "-lc", script], capture_output=True, text=True,
-                          timeout=timeout, cwd=cwd)
+    if platform.system() == "Windows":
+        shell = str(params.get("shell") or "cmd")
+        low = os.path.basename(shell).lower()
+        if low.startswith("powershell") or low == "pwsh":
+            exe = shell if low != "cmd" else "powershell.exe"
+            cmd = [exe, "-NoProfile", "-NonInteractive", "-Command",
+                   "[Console]::OutputEncoding=[Text.Encoding]::UTF8; " + script]
+        else:
+            # chcp 65001 让 cmd 的 stdout 变 UTF-8，中文不乱码
+            cmd = ["cmd.exe", "/d", "/c", "chcp 65001>nul && " + script]
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=timeout, cwd=cwd)
+    else:
+        shell = str(params.get("shell") or ("/bin/zsh" if platform.system() == "Darwin" else "/bin/sh"))
+        proc = subprocess.run([shell, "-lc", script], capture_output=True, text=True,
+                              timeout=timeout, cwd=cwd)
     return {"exit_code": proc.returncode, "cwd": cwd,
             "duration_ms": int((time.time() - started) * 1000),
             "stdout": _clip(proc.stdout), "stderr": _clip(proc.stderr)}
@@ -303,6 +475,9 @@ def op_input_click(params: dict) -> dict:
         x, y = int(params.get("x")), int(params.get("y"))
     except (TypeError, ValueError):
         raise ValueError("需要整数坐标 x / y")
+    if backend == "win":
+        _win_input().click(x, y)
+        return {"x": x, "y": y, "backend": "win"}
     if backend == "quartz":
         import Quartz as Q
         point = (x, y)
@@ -320,6 +495,9 @@ def op_input_type(params: dict) -> dict:
     if not text:
         raise ValueError("text 为空")
     backend = _input_backend()
+    if backend == "win":
+        _win_input().type_text(text)      # KEYEVENTF_UNICODE，中文/emoji 都能打
+        return {"typed": len(text), "backend": "win"}
     if backend == "quartz":
         import Quartz as Q
         for ch in text:
@@ -345,6 +523,17 @@ def op_input_key(params: dict) -> dict:
         raise ValueError("keys 为空，例如 return / cmd+space / shift+tab")
     parts = [p for p in combo.replace(" ", "").split("+") if p]
     backend = _input_backend()
+    if backend == "win":
+        mods = [_WIN_MODS[p] for p in parts[:-1] if p in _WIN_MODS]
+        name = parts[-1]
+        vk = _WIN_VK.get(name)
+        if vk is None and len(name) == 1:
+            _win_input().type_text(name)
+            return {"keys": combo, "backend": "win"}
+        if vk is None:
+            raise ValueError(f"不认识的键名：{name}")
+        _win_input().key(vk, mods)
+        return {"keys": combo, "backend": "win"}
     if backend == "quartz":
         import Quartz as Q
         mods = [_MODS_MAC[p] for p in parts[:-1] if p in _MODS_MAC]
@@ -390,6 +579,9 @@ def op_input_drag(params: dict) -> dict:
         raise ValueError("需要整数坐标 x1 / y1 / x2 / y2")
     steps = max(2, min(int(params.get("steps") or 12), 60))
     backend = _input_backend()
+    if backend == "win":
+        _win_input().drag(x1, y1, x2, y2, steps)
+        return {"x1": x1, "y1": y1, "x2": x2, "y2": y2, "steps": steps, "backend": "win"}
     if backend == "quartz":
         import Quartz as Q
         points: list[tuple[float, float]] = [(x1, y1)]
@@ -424,6 +616,9 @@ def op_input_scroll(params: dict) -> dict:
         raise ValueError("amount 不能为 0")
     amount = max(-100, min(amount, 100))
     backend = _input_backend()
+    if backend == "win":
+        _win_input().scroll(amount)
+        return {"amount": amount, "unit": "line", "backend": "win"}
     if backend == "quartz":
         import Quartz as Q
         event = Q.CGEventCreateScrollWheelEvent(None, Q.kCGScrollEventUnitLine, 1, amount)
@@ -468,6 +663,38 @@ def op_app_list(params: dict) -> dict:
                     continue
                 seen.add(entry.path)
                 rows.append({"name": name, "path": entry.path, "folder": folder})
+    elif platform.system() == "Windows":
+        # Get-StartApps 列出开始菜单里的所有应用（UWP 和桌面程序都算），
+        # 输出重定向到临时文件再读，避免控制台代码页把中文名搞乱。
+        fd, tmp = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        try:
+            ps = ("Get-StartApps | Select-Object Name,AppID | ConvertTo-Json -Compress "
+                  f"| Out-File -LiteralPath '{tmp}' -Encoding utf8")
+            subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", ps],
+                           capture_output=True, text=True, timeout=60)
+            try:
+                with open(tmp, encoding="utf-8-sig") as fh:
+                    raw = fh.read().strip()
+            except OSError:
+                raw = ""
+            items = json.loads(raw) if raw else []
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        if isinstance(items, dict):
+            items = [items]
+        for item in items:
+            name = str(item.get("Name") or "").strip()
+            app_id = str(item.get("AppID") or "").strip()
+            if not name or not app_id:
+                continue
+            if query and query not in name.lower():
+                continue
+            rows.append({"name": name, "path": "shell:AppsFolder\\" + app_id,
+                         "folder": "start-menu"})
     else:
         for folder in ("/usr/share/applications", os.path.expanduser("~/.local/share/applications")):
             if not os.path.isdir(folder):
@@ -502,6 +729,18 @@ def op_app_launch(params: dict) -> dict:
     name = str(params.get("name") or "").strip()
     if not target and not name:
         raise ValueError("需要 name 或 path")
+    if platform.system() == "Windows":
+        if target.lower().startswith("shell:appsfolder"):
+            subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+                            f'Start-Process "{target}"'], check=True, timeout=30)
+        elif target and os.path.exists(target):
+            os.startfile(target)  # noqa: S606 — 用户点名要打开的程序
+        elif target:
+            subprocess.run(["cmd.exe", "/d", "/c", "start", "", target], check=True, timeout=30)
+        else:
+            subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+                            f'Start-Process "{name}"'], check=True, timeout=30)
+        return {"launched": name or target, "backend": "start"}
     if platform.system() == "Darwin":
         cmd = ["open", "-a", name] if name and not target else ["open", target]
         subprocess.run(cmd, check=True, timeout=30)
@@ -515,6 +754,22 @@ def op_app_launch(params: dict) -> dict:
 
 def _guard_destructive(target: str) -> None:
     """删/移之前挡一下明显不该动的路径：根目录、家目录本身和它的一级目录。"""
+    if sys.platform == "win32":
+        import string
+
+        protected = {
+            os.environ.get("SystemRoot", r"C:\Windows").rstrip("\\").lower(),
+            os.environ.get("ProgramFiles", r"C:\Program Files").rstrip("\\").lower(),
+            os.environ.get("ProgramFiles(x86)", "").rstrip("\\").lower(),
+            os.environ.get("ProgramData", "").rstrip("\\").lower(),
+            os.environ.get("USERPROFILE", "").rstrip("\\").lower(),
+        }
+        protected |= {f"{d}:\\".lower() for d in string.ascii_uppercase}
+        shielded = {x for x in protected if x}
+        low = target.rstrip("\\").lower()
+        if low in shielded or low in {x.rstrip("\\") for x in shielded}:
+            raise ValueError(f"拒绝操作受保护路径：{target}")
+        return
     home = os.path.expanduser("~").rstrip("/")
     if target in ("/", home, "/Users", "/System", "/etc", "/usr", "/bin", "/sbin"):
         raise ValueError(f"拒绝操作受保护路径：{target}")
@@ -632,7 +887,7 @@ def post(base: str, path: str, payload: dict, timeout: float) -> tuple[int, dict
     req = urllib.request.Request(base + path, data=json.dumps(payload).encode(), method="POST",
                                 headers={"Content-Type": "application/json",
                                          "Accept": "application/json",
-                                         "User-Agent": "Backon/1.0.9 (device agent)"})
+                                         "User-Agent": f"Backon/{APP_VERSION} (device agent)"})
     kwargs = {"timeout": timeout}
     if base.lower().startswith("https"):
         kwargs["context"] = ssl_context()
@@ -733,6 +988,8 @@ def main() -> None:
         try:
             status, body = post(hub, "/poll", {
                 "device_id": state["device_id"], "token": state["token"], "wait": POLL_WAIT,
+                # 心跳顺带报能力：新装的 .app 无需重新配对，hub 就能刷新设备能力表。
+                "caps": caps(), "version": APP_VERSION,
             }, POLL_WAIT + 10)
             backoff = 2.0
             if status == 204:

@@ -1,0 +1,88 @@
+name: Build EkkoHand (Windows)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'agent.py'
+      - 'win/**'
+      - '.github/workflows/build-windows.yml'
+    tags:
+      - 'ekkohand-win-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pillow pystray pyinstaller certifi
+
+      - name: Smoke import（agent 必须能在 Windows 上报全能力）
+        working-directory: win
+        env:
+          PYTHONPATH: ..
+        run: |
+          python -c "import agent; print('version', agent.APP_VERSION); print('caps', agent.caps()); assert 'input.click' in agent.caps(); assert agent._input_backend() == 'win'"
+
+      - name: Build exe
+        working-directory: win
+        env:
+          PYTHONPATH: ..
+          BACKON_VERSION: ${{ github.ref_name }}
+        run: |
+          pyinstaller --noconfirm --clean EkkoHand.spec
+
+      - name: Verify bundle
+        working-directory: win
+        run: |
+          if (-not (Test-Path "dist\EkkoHand\EkkoHand.exe")) { throw "缺 EkkoHand.exe" }
+          foreach ($f in @("dist\EkkoHand\_internal\tray.png", "dist\EkkoHand\_internal\EkkoHand.ico", "dist\EkkoHand\_internal\certifi\cacert.pem")) {
+            if (-not (Test-Path $f)) { throw "缺 $f" }
+          }
+          (Get-Item "dist\EkkoHand\EkkoHand.exe").Length
+
+      - name: Package zip
+        working-directory: win
+        run: |
+          Compress-Archive -Path "dist\EkkoHand" -DestinationPath "dist\EkkoHand-win64.zip" -Force
+          (Get-FileHash "dist\EkkoHand-win64.zip" -Algorithm SHA256).Hash + "  EkkoHand-win64.zip" | Out-File -Encoding ascii "dist\SHA256.txt"
+          Get-Content "dist\SHA256.txt"
+          (Get-Item "dist\EkkoHand-win64.zip").Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EkkoHand-Windows
+          path: |
+            win/dist/EkkoHand-win64.zip
+            win/dist/SHA256.txt
+          retention-days: 30
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            win/dist/EkkoHand-win64.zip
+            win/dist/SHA256.txt
+          generate_release_notes: true
+          body: |
+            Windows 客户端（x64）。
+
+            解压 → 双击 `EkkoHand.exe` → 托盘出现图标 → 在面板里输入工作台生成的
+            6 位配对码。首次运行会有 SmartScreen 提示（「更多信息」→「仍要运行」），
+            因为没有购买代码签名证书。
+
+            能力：截屏（多屏）、鼠标点击/拖拽/滚轮、键盘输入（含中文）、
+            列出并打开应用、读写文件、跑命令。所有操作仍需 Ekko 会话审批。
