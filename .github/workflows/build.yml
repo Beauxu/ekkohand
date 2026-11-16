@@ -50,7 +50,8 @@ jobs:
           security create-keychain -p actions backon-sign.keychain
           security default-keychain -s backon-sign.keychain
           security unlock-keychain -p actions backon-sign.keychain
-          security import /tmp/backon.p12 -k backon-sign.keychain -P "$CERT_PASSWORD" \
+          CLEAN_PASS="$(printf '%s' "$CERT_PASSWORD" | tr -d ' \n\r\t')"
+          security import /tmp/backon.p12 -k backon-sign.keychain -P "$CLEAN_PASS" \
             -T /usr/bin/codesign -T /usr/bin/security
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k actions backon-sign.keychain > /dev/null
           security find-identity -v -p codesigning backon-sign.keychain
