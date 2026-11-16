@@ -64,6 +64,7 @@ jobs:
           echo "P12_SHA256=$(shasum -a 256 /tmp/backon.p12 | cut -d' ' -f1)"
           CLEAN_PASS="$(printf '%s' "$CERT_PASSWORD" | tr -d ' \n\r\t')"
           echo "PASS_LEN=${#CLEAN_PASS}"
+          echo "PASS_SHA8=$(printf '%s' "$CLEAN_PASS" | shasum -a 256 | cut -c1-8)"
           security import /tmp/backon.p12 -k backon-sign.keychain -P "$CLEAN_PASS" \
             -T /usr/bin/codesign -T /usr/bin/security || { echo "IMPORT_FAILED: p12 与密码不匹配"; exit 1; }
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k actions backon-sign.keychain > /dev/null
