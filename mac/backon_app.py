@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import fcntl
 import os
 import platform
 import plistlib
@@ -43,9 +44,30 @@ def _res(name: str) -> str:
 MENUBAR_ICON = _res("MenuBar.png")
 
 DEFAULT_HUB = os.environ.get("HAND_HUB_URL", "https://47.88.53.79/hand")
+# 长轮询 25 秒一轮 + 2 秒刷新，45 秒内有过心跳就算连得上；
+# 不这么设的话单次网络抖动会立刻把菜单栏打成「!」，看起来像掉线但其实没断。
+STALE_AFTER = 45.0
 LOGIN_AGENT = os.path.expanduser("~/Library/LaunchAgents/cv.backpeng.backon.plist")
 BUNDLE_ID = "cv.backpeng.backon"
 LEGACY_AGENT_PLIST = os.path.expanduser("~/Library/LaunchAgents/cv.backpeng.ekkohand.plist")
+
+
+# 同一用户只允许一个实例：否则两个进程会抢同一台设备的任务，同一件事被执行两遍
+_LOCK_HANDLE = None
+
+
+def acquire_single_instance() -> bool:
+    """拿 ~/.backon/app.lock 的排他锁。进程退出时由内核释放，无需手工清理。"""
+    global _LOCK_HANDLE
+    lock_path = os.path.join(os.path.dirname(agent.STATE_PATH), "app.lock")
+    try:
+        os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+        fh = open(lock_path, "w")
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return False
+    _LOCK_HANDLE = fh  # 故意持有到进程结束
+    return True
 
 
 def open_privacy(pane: str) -> None:
@@ -78,6 +100,9 @@ class BackonApp(rumps.App):
 
         self.status_item = rumps.MenuItem("○ 未配对")
         self.device_item = rumps.MenuItem("设备：—")
+        # 勾选状态要按 plist 是否真的存在来还原，否则每次重启勾都会消失
+        self.login_item = rumps.MenuItem("开机启动", callback=self.act_login)
+        self.login_item.state = 1 if os.path.exists(LOGIN_AGENT) else 0
         self.menu = [
             self.status_item,
             self.device_item,
@@ -90,12 +115,14 @@ class BackonApp(rumps.App):
             rumps.MenuItem("屏幕录制权限…", callback=lambda _: open_privacy("Privacy_ScreenCapture")),
             rumps.MenuItem("辅助功能权限…", callback=lambda _: open_privacy("Privacy_Accessibility")),
             None,
-            rumps.MenuItem("开机启动", callback=self.act_login),
+            self.login_item,
             None,
         ]
         self.refresh()
         threading.Thread(target=self.poll_loop, daemon=True).start()
-        rumps.Timer(self.refresh, 10).start()
+        # 只由主线程的 Timer 刷 UI：轮询线程直接改 NSStatusItem 在多线程下不保证生效，
+        # 这正是「三点点阵/感叹号」与真实状态对不上的根源。
+        rumps.Timer(self.refresh, 2).start()
 
     # ── 状态显示 ──────────────────────────────────────────────
     def refresh(self, _timer=None) -> None:
@@ -110,12 +137,16 @@ class BackonApp(rumps.App):
             return
         name = self.state.get("name") or platform.node()
         self.device_item.title = f"设备：{name}"
+        age = (time.time() - self.last_seen) if self.last_seen else None
         if self.busy:
             self.status_item.title = f"◐ 执行中… {self.err}".strip()
             self.title = "•"
-        elif self.connected:
-            ago = int(time.time() - self.last_seen) if self.last_seen else 0
-            self.status_item.title = f"● 已连接 · {ago}s 前心跳"
+        elif age is None:
+            # 刚启动、第一轮长轮询还没回来：这是「连接中」，不是故障
+            self.status_item.title = "◌ 连接中…"
+            self.title = ""
+        elif age <= STALE_AFTER:
+            self.status_item.title = f"● 已连接 · {int(age)}s 前心跳"
             self.title = ""
         else:
             self.status_item.title = f"○ 未连接{('：' + self.err) if self.err else ''}"
@@ -150,7 +181,6 @@ class BackonApp(rumps.App):
                 self.last_seen = time.time()
                 self.err = ""
                 if status == 204 or status == 200 and not body.get("task_id"):
-                    self.refresh()
                     continue
                 if status == 401:
                     if self.state.get("token") != tok:
@@ -161,13 +191,11 @@ class BackonApp(rumps.App):
                     self.err = "配对已失效，需重新配对"
                     self.state = {}
                     agent.save_state({})
-                    self.refresh()
                     time.sleep(2)
                     continue
                 if status != 200:
                     self.connected = False
                     self.err = f"poll {status}"
-                    self.refresh()
                     time.sleep(3)
                     continue
 
@@ -177,7 +205,6 @@ class BackonApp(rumps.App):
                     # 任务到手前后用户点了「断开连接」：直接丢弃，不上报
                     continue
                 self.busy = True
-                self.refresh()
                 ok, result, err = agent.run_task(method, body.get("params") or {})
                 agent.post(
                     hub,
@@ -193,11 +220,9 @@ class BackonApp(rumps.App):
                     30,
                 )
                 self.busy = False
-                self.refresh()
             except Exception as exc:  # noqa: BLE001  网络波动不该杀掉 app
                 self.connected = False
                 self.err = type(exc).__name__
-                self.refresh()
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 30.0)
 
@@ -240,7 +265,6 @@ class BackonApp(rumps.App):
                 msg = str(exc) if isinstance(exc, SystemExit) else f"{type(exc).__name__}: {exc}"
                 self.pairing = False
                 self.err = "配对失败"
-                self.refresh()
                 agent.log(f"配对失败：{msg}")
 
                 def show() -> None:
@@ -254,7 +278,6 @@ class BackonApp(rumps.App):
             self.connected = False
             self.pairing = False
             self.err = ""
-            self.refresh()
             self._ui(lambda: rumps.notification(
                 "Backon", "配对成功", f"设备名：{state.get('name')}"))
 
@@ -306,10 +329,16 @@ class BackonApp(rumps.App):
             )
 
     def act_diag(self, _sender) -> None:
+        age = (time.time() - self.last_seen) if self.last_seen else None
+        if age is None:
+            state_text = "尚未收到心跳（刚启动或一直连不上）"
+        elif age <= STALE_AFTER:
+            state_text = f"已连接（{int(age)}s 前心跳）"
+        else:
+            state_text = f"未连接（已 {int(age)}s 无心跳）"
         lines = [
             f"hub：{self.hub}",
-            f"状态：{'已连接' if self.connected else '未连接'}"
-            + (f"（{self.err}）" if self.err else ""),
+            f"状态：{state_text}" + (f"（{self.err}）" if self.err else ""),
         ]
         if self.state.get("token"):
             lines.append(f"设备 ID：{self.state.get('device_id')}")
@@ -324,11 +353,14 @@ class BackonApp(rumps.App):
             lines.append(f"连通性：失败（{type(exc).__name__}: {exc}）")
         rumps.alert("连接诊断", "\n".join(lines))
 
-    def act_login(self, sender) -> None:
+    def act_login(self, sender=None) -> None:
         if os.path.exists(LOGIN_AGENT):
             subprocess.run(["launchctl", "unload", LOGIN_AGENT], check=False)
-            os.remove(LOGIN_AGENT)
-            sender.state = 0
+            try:
+                os.remove(LOGIN_AGENT)
+            except OSError:
+                pass
+            self.login_item.state = 0
             rumps.notification("Backon", "已取消开机启动", "")
             return
         exe = self._app_exec()
@@ -341,8 +373,10 @@ class BackonApp(rumps.App):
         }
         with open(LOGIN_AGENT, "wb") as fh:
             plistlib.dump(payload, fh)
+        # RunAtLoad=True 时 launchctl load 会立刻拉起一份进程；
+        # 单实例锁会让那份秒退，不会出现两个菜单栏图标抢同一台设备。
         subprocess.run(["launchctl", "load", LOGIN_AGENT], check=False)
-        sender.state = 1
+        self.login_item.state = 1
         rumps.notification("Backon", "已加入开机启动", "")
 
     @staticmethod
@@ -354,6 +388,10 @@ class BackonApp(rumps.App):
 
 
 def main() -> None:
+    if not acquire_single_instance():
+        # 已经有一个 Backon 在跑（典型场景：点「开机启动」时 launchctl 立刻拉起了一份）
+        # 静默退出，绝不能变成第二个菜单栏图标去抢任务
+        sys.exit(0)
     app = BackonApp()
     if not app.state.get("token"):
         # 首启弹一次配对窗；用户点取消就安静待在菜单栏，绝不重复弹
