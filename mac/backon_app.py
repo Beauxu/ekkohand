@@ -126,30 +126,35 @@ class BackonApp(rumps.App):
 
     # ── 状态显示 ──────────────────────────────────────────────
     def refresh(self, _timer=None) -> None:
+        """菜单栏只用符号表达状态，不掏文字（省空间、也不用读秒）。
+
+        菜单栏：已连接=空 / 连接中=… / 执行中=• / 未配对=? / 掉线=!
+        下拉菜单里用短词，心跳秒数只在「连接诊断」里给。
+        """
         if self.pairing:
-            self.status_item.title = "◐ 配对中…"
+            self.status_item.title = "配对中"
             self.title = "…"
             return
         if not self.state.get("token"):
-            self.status_item.title = "○ 未配对"
+            self.status_item.title = "未配对"
             self.device_item.title = "设备：—"
-            self.title = "?"  # 带问号：提示还需要配对
+            self.title = "?"  # 提示还需要配对
             return
         name = self.state.get("name") or platform.node()
         self.device_item.title = f"设备：{name}"
         age = (time.time() - self.last_seen) if self.last_seen else None
         if self.busy:
-            self.status_item.title = f"◐ 执行中… {self.err}".strip()
+            self.status_item.title = "执行中"
             self.title = "•"
         elif age is None:
-            # 刚启动、第一轮长轮询还没回来：这是「连接中」，不是故障
-            self.status_item.title = "◌ 连接中…"
-            self.title = ""
+            # 刚启动、第一轮长轮询还没回来：这是「连接中」，三点表示还在等
+            self.status_item.title = "连接中"
+            self.title = "…"
         elif age <= STALE_AFTER:
-            self.status_item.title = f"● 已连接 · {int(age)}s 前心跳"
-            self.title = ""
+            self.status_item.title = "已连接"
+            self.title = ""  # 连着的时候菜单栏只留图标
         else:
-            self.status_item.title = f"○ 未连接{('：' + self.err) if self.err else ''}"
+            self.status_item.title = "未连接"
             self.title = "!"
 
     # ── 主循环：长轮询 ────────────────────────────────────────

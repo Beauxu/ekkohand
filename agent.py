@@ -431,7 +431,7 @@ def post(base: str, path: str, payload: dict, timeout: float) -> tuple[int, dict
     req = urllib.request.Request(base + path, data=json.dumps(payload).encode(), method="POST",
                                 headers={"Content-Type": "application/json",
                                          "Accept": "application/json",
-                                         "User-Agent": "Backon/1.0.8 (device agent)"})
+                                         "User-Agent": "Backon/1.0.9 (device agent)"})
     kwargs = {"timeout": timeout}
     if base.lower().startswith("https"):
         kwargs["context"] = ssl_context()
