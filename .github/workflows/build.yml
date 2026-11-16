@@ -45,7 +45,7 @@ jobs:
             echo "::warning::未配置 BACKON_CERT_P12，退回 ad-hoc 签名（TCC 会随版本失效）"
             exit 0
           fi
-          echo "$CERT_P12" | base64 --decode > /tmp/backon.p12
+          echo "$CERT_P12" | tr -d ' \n\r\t' | base64 --decode > /tmp/backon.p12
           security create-keychain -p actions backon-sign.keychain
           security default-keychain -s backon-sign.keychain
           security unlock-keychain -p actions backon-sign.keychain
