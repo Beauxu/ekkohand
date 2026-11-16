@@ -233,6 +233,8 @@ class BackonApp(rumps.App):
 
     # ── 状态显示 ──────────────────────────────────────────────
     def refresh(self, _timer=None) -> None:
+        # 每轮都顺手刷新权限：用户在系统设置里勾完，菜单自己就会变成 ✅
+        self.refresh_perms()
         if self.pairing:
             self.status_item.title = "◐ 配对中…"
             self.title = "…"
