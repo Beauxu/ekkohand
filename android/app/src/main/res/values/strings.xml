@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">EkkoHand</string>
+    <string name="accessibility_label">EkkoHand 操作</string>
+    <string name="accessibility_desc">允许 EkkoHand 代表你点击、滑动和输入文字。只在你在 Ekko 会话里批准的操作上执行。</string>
+    <string name="notif_channel">EkkoHand 运行状态</string>
+</resources>

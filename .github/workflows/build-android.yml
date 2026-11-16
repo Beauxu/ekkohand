@@ -1,0 +1,94 @@
+name: Build EkkoHand (Android)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - '.github/workflows/build-android.yml'
+    tags:
+      - 'ekkohand-android-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Accept licenses & ensure SDK 34
+        run: |
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          if [ ! -d "$SDK/platforms/android-34" ]; then
+            yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0" > /dev/null
+          fi
+          echo "ANDROID_HOME=$SDK"
+
+      - name: Build debug APK
+        working-directory: android
+        run: |
+          exec > >(tee -a "$RUNNER_TEMP/ci.log") 2>&1
+          gradle --no-daemon assembleDebug
+          ls -lh app/build/outputs/apk/debug/
+
+      - name: Package
+        working-directory: android
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk EkkoHand-android.apk
+          sha256sum EkkoHand-android.apk | tee SHA256.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EkkoHand-Android
+          path: |
+            android/EkkoHand-android.apk
+            android/SHA256.txt
+          retention-days: 30
+
+      - name: Push diagnostics
+        if: always()
+        run: |
+          mkdir -p ci-logs
+          {
+            echo "run: ${GITHUB_RUN_ID}"
+            echo "job status: ${{ job.status }}"
+            echo "--- log tail ---"
+            sed -E 's/[A-Za-z0-9+/=]{80,}/<redacted>/g' "$RUNNER_TEMP/ci.log" 2>/dev/null | tail -120
+          } > "ci-logs/android-${GITHUB_RUN_ID}.log"
+          git config user.email ci@local
+          git config user.name ci
+          git add -f ci-logs
+          git commit -m "ci: android diagnostics" || true
+          git push origin HEAD:refs/heads/ci-log --force || true
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            android/EkkoHand-android.apk
+            android/SHA256.txt
+          generate_release_notes: true
+          body: |
+            Android 客户端（APK，arm64/armv7 通用，debug 签名）。
+
+            安装后：
+            1. 打开 EkkoHand，输入工作台生成的 6 位配对码；
+            2. 点「授权屏幕截取」，在系统弹窗里选「开始」（手机重启后要重做一次）；
+            3. 点「打开无障碍设置」，开启「EkkoHand 操作」。
+
+            能力：截屏、点击、滑动、返回/主页、往输入框写文字、列出/打开应用、
+            app 私有目录读写。**不支持**跑 shell（没有 root），也不碰支付/密码类界面。
