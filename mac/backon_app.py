@@ -45,7 +45,7 @@ MENUBAR_ICON = _res("MenuBar.png")
 DEFAULT_HUB = os.environ.get("HAND_HUB_URL", "http://47.88.53.79/hand")
 LOGIN_AGENT = os.path.expanduser("~/Library/LaunchAgents/cv.backpeng.backon.plist")
 BUNDLE_ID = "cv.backpeng.backon"
-APP_VERSION = "1.1.3"
+APP_VERSION = "1.1.4"
 LEGACY_AGENT_PLIST = os.path.expanduser("~/Library/LaunchAgents/cv.backpeng.ekkohand.plist")
 
 
@@ -157,6 +157,68 @@ def probe_screen_capture() -> tuple[bool, str]:
 # 拖进系统设置的列表区域 = 自动添加并勾选，比手动翻列表可靠得多。
 # 窗口底部带一行实时诊断（权限原始值/Quartz 是否加载/签名身份），
 # 授权一旦生效立刻变 ✅ 并给出「重启」按钮。
+#
+# 注意：PyObjC 的类一旦定义就会注册进 Objective-C runtime，同名类
+# 注册第二次直接报「overriding existing Objective-C class」。
+# 所以下面两个类必须在模块顶层，绝不能放进函数里（v1.1.3 的教训）。
+try:
+    from AppKit import NSImageView as _NSImageView  # noqa: PLC0415
+    from Foundation import NSObject as _NSObject  # noqa: PLC0415
+except Exception:  # noqa: BLE001
+    _NSImageView = object
+    _NSObject = object
+
+
+class _GuideDragIcon(_NSImageView):
+    """可拖拽的 app 图标。"""
+
+    def mouseDown_(self, event):
+        from AppKit import NSDraggingItem  # noqa: PLC0415
+        from Foundation import NSURL  # noqa: PLC0415
+        url = NSURL.fileURLWithPath_(self.app_path)
+        item = NSDraggingItem.alloc().initWithPasteboardWriter_(url)
+        item.setDraggingFrame_contents_(self.bounds(), self.image())
+        self.beginDraggingSessionWithItems_event_source_([item], event, self)
+
+    def draggingSourceOperationMaskForLocal_(self, _local):
+        return 1  # copy
+
+
+class _GuideCtrl(_NSObject):
+    def openPane_(self, _sender):
+        open_privacy(self.pane)
+
+    def restart_(self, _sender):
+        argv = ([sys.executable] if getattr(sys, "frozen", False)
+                else [sys.executable, os.path.join(HERE, "backon_app.py")])
+        subprocess.Popen(argv, close_fds=True, start_new_session=True)
+        rumps.quit_application()
+
+    def tick_(self, _timer):
+        val = self.check()
+        mark = {True: "✅ 已授权", False: "❌ 未授权", None: "？问不出来"}[val]
+        qtxt = "已加载" if _quartz() is not None else "缺失（打包问题，截图这行发我）"
+        self.status.setStringValue_(
+            f"{self.title}：{mark}    Quartz 模块：{qtxt}\n"
+            f"版本 {APP_VERSION}    签名：{sign_identity()}\n"
+            f"授权对象：{self.app_path}"
+        )
+        if val is True and not self.granted:
+            self.granted = True
+            self.rbtn.setHidden_(False)
+            self.hint.setStringValue_("✅ 已检测到授权！点「重启 Backon」生效。")
+            rumps.notification("Backon", f"{self.title}已授权", "点引导窗里的「重启 Backon」完成")
+
+    def windowWillClose_(self, _note):
+        if self.timer is not None:
+            self.timer.invalidate()
+            self.timer = None
+        for obj in (self.panel, self):
+            if obj in _GUIDE_KEEP:
+                _GUIDE_KEEP.remove(obj)
+
+
+_GUIDE_KEEP = []
 
 
 def _app_path() -> str:
@@ -180,60 +242,17 @@ def open_perm_guide(kind: str) -> None:
 
 def _open_perm_guide(kind: str) -> None:
     from AppKit import (  # noqa: PLC0415
-        NSApp, NSBackingStoreBuffered, NSButton, NSColor, NSFont, NSImageView,
+        NSApp, NSBackingStoreBuffered, NSButton, NSColor, NSFont,
         NSMakeRect, NSPanel, NSTextField, NSWindowStyleMaskClosable,
         NSWindowStyleMaskTitled, NSWorkspace,
     )
-    from Foundation import NSObject, NSTimer, NSURL  # noqa: PLC0415
+    from Foundation import NSTimer  # noqa: PLC0415
 
     is_ax = kind == "ax"
     title = "辅助功能" if is_ax else "屏幕录制"
     pane = "Privacy_Accessibility" if is_ax else "Privacy_ScreenCapture"
     check = accessibility_allowed if is_ax else screen_capture_allowed
     app_path = _app_path()
-
-    class _DragIcon(NSImageView):  # 可拖拽的 app 图标
-        def mouseDown_(self, event):
-            from AppKit import NSDraggingItem  # noqa: PLC0415
-            url = NSURL.fileURLWithPath_(app_path)
-            item = NSDraggingItem.alloc().initWithPasteboardWriter_(url)
-            item.setDraggingFrame_contents_(self.bounds(), self.image())
-            self.beginDraggingSessionWithItems_event_source_([item], event, self)
-
-        def draggingSourceOperationMaskForLocal_(self, _local):
-            return 1  # copy
-
-    class _Ctrl(NSObject):
-        def openPane_(self, _sender):
-            open_privacy(pane)
-
-        def restart_(self, _sender):
-            argv = ([sys.executable] if getattr(sys, "frozen", False)
-                    else [sys.executable, os.path.join(HERE, "backon_app.py")])
-            subprocess.Popen(argv, close_fds=True, start_new_session=True)
-            rumps.quit_application()
-
-        def tick_(self, _timer):
-            val = check()
-            mark = {True: "✅ 已授权", False: "❌ 未授权", None: "？问不出来"}[val]
-            qtxt = "已加载" if _quartz() is not None else "缺失（打包问题，请截图这行发我）"
-            status.setStringValue_(
-                f"{title}：{mark}    Quartz 模块：{qtxt}\n"
-                f"版本 {APP_VERSION}    签名：{sign_identity()}\n"
-                f"授权对象：{app_path}"
-            )
-            if val is True and not self.granted:
-                self.granted = True
-                rbtn.setHidden_(False)
-                hint.setStringValue_("✅ 已检测到授权！点「重启 Backon」生效。")
-                rumps.notification("Backon", f"{title}已授权", "点引导窗里的「重启 Backon」完成")
-
-        def windowWillClose_(self, _note):
-            if timer_ref[0] is not None:
-                timer_ref[0].invalidate()
-                timer_ref[0] = None
-            if ctrl_ref[0] in _GUIDE_KEEP:
-                _GUIDE_KEEP.remove(ctrl_ref[0])
 
     panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
         NSMakeRect(0, 0, 560, 320),
@@ -246,7 +265,8 @@ def _open_perm_guide(kind: str) -> None:
     panel.center()
     v = panel.contentView()
 
-    icon = _DragIcon.alloc().initWithFrame_(NSMakeRect(28, 150, 128, 128))
+    icon = _GuideDragIcon.alloc().initWithFrame_(NSMakeRect(28, 150, 128, 128))
+    icon.app_path = app_path
     img = NSWorkspace.sharedWorkspace().iconForFile_(app_path)
     img.setSize_((128, 128))
     icon.setImage_(img)
@@ -281,10 +301,17 @@ def _open_perm_guide(kind: str) -> None:
     status = label((28, 28, 520, 78), "状态读取中…", 11)
     status.setTextColor_(NSColor.secondaryLabelColor())
 
-    ctrl = _Ctrl.alloc().init()
+    ctrl = _GuideCtrl.alloc().init()
+    ctrl.pane = pane
+    ctrl.check = check
+    ctrl.title = title
+    ctrl.app_path = app_path
+    ctrl.status = status
+    ctrl.rbtn = rbtn
+    ctrl.hint = hint
+    ctrl.panel = panel
     ctrl.granted = False
-    ctrl_ref = [ctrl]
-    timer_ref = [None]
+    ctrl.timer = None
     btn.setTarget_(ctrl)
     btn.setAction_("openPane:")
     rbtn.setTarget_(ctrl)
@@ -303,13 +330,9 @@ def _open_perm_guide(kind: str) -> None:
         request_accessibility()
     else:
         request_screen_capture()
-    timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+    ctrl.timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
         1.0, ctrl, "tick:", None, True)
-    timer_ref[0] = timer
     ctrl.tick_(None)
-
-
-_GUIDE_KEEP = []
 
 
 class BackonApp(rumps.App):
