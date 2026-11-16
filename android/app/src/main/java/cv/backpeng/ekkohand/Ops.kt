@@ -28,7 +28,7 @@ object Ops {
 
     fun handle(ctx: Context, method: String, p: JSONObject): Pair<Boolean, JSONObject> = try {
         val result: JSONObject = when (method) {
-            "screenshot" -> screenshot(ctx, p)
+            "screenshot" -> screenshot(p)
             "input.click" -> click(p)
             "input.type" -> typeText(p)
             "input.key" -> key(p)
@@ -50,7 +50,7 @@ object Ops {
     }
 
     // ── 截图 ──────────────────────────────────────────────────
-    private fun screenshot(ctx: Context, p: JSONObject): JSONObject {
+    private fun screenshot(p: JSONObject): JSONObject {
         if (!ScreenCapture.isReady()) {
             throw IllegalStateException(
                 "截屏授权已失效：打开 EkkoHand App，点「授权屏幕截取」再试（手机重启后必须重新授权）"
@@ -152,7 +152,10 @@ object Ops {
             ) continue
             rows.put(JSONObject().put("name", label).put("path", pkg).put("folder", "launcher"))
         }
-        return JSONObject().put("apps", rows).put("total", rows.length()).put("truncated", false)
+        val total = rows.length()
+        val sliced = JSONArray()
+        for (i in 0 until minOf(total, limit)) sliced.put(rows.get(i))
+        return JSONObject().put("apps", sliced).put("total", total).put("truncated", total > limit)
     }
 
     private fun appLaunch(ctx: Context, p: JSONObject): JSONObject {
