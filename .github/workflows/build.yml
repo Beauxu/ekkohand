@@ -68,6 +68,9 @@ jobs:
           security import /tmp/backon.p12 -k backon-sign.keychain -P "$CLEAN_PASS" \
             -T /usr/bin/codesign -T /usr/bin/security || { echo "IMPORT_FAILED: p12 与密码不匹配"; exit 1; }
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k actions backon-sign.keychain > /dev/null
+          # 自签名证书必须被系统信任，find-identity -v 才会认它为 valid codesigning 身份
+          security find-certificate -c "Backon Code Signing" -p backon-sign.keychain > /tmp/backon-cert.pem
+          sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain /tmp/backon-cert.pem
           security find-identity -v -p codesigning backon-sign.keychain
           if security find-identity -v -p codesigning backon-sign.keychain | grep -q "Backon Code Signing"; then
             echo "SIGN_IDENTITY=Backon Code Signing" >> "$GITHUB_ENV"
@@ -86,7 +89,7 @@ jobs:
           if [ "$SIGN_IDENTITY" = "ad-hoc" ]; then
             codesign --force --deep --sign - --identifier cv.backpeng.backon dist/Backon.app
           else
-            codesign --force --deep --sign "$SIGN_IDENTITY" --identifier cv.backpeng.backon dist/Backon.app
+            codesign --force --deep --keychain "$HOME/Library/Keychains/backon-sign.keychain-db" --sign "$SIGN_IDENTITY" --identifier cv.backpeng.backon dist/Backon.app
           fi
           echo "--- 签名结果 ---"
           codesign -dvv dist/Backon.app 2>&1 | grep -E 'Identifier|Authority|TeamIdentifier|CDHash' || true
