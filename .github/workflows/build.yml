@@ -21,6 +21,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Heartbeat
+        run: |
+          mkdir -p ci-logs
+          echo "run=$GITHUB_RUN_ID ref=$GITHUB_REF sha=$GITHUB_SHA started=$(date -u +%FT%TZ)" >> "ci-logs/heartbeat.log"
+          git config user.email ci@local
+          git config user.name ci
+          git add -f ci-logs/heartbeat.log
+          git commit -m "ci: heartbeat $GITHUB_RUN_ID" || true
+          git push origin HEAD:refs/heads/ci-log --force || echo "heartbeat push failed"
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -50,9 +60,12 @@ jobs:
           security create-keychain -p actions backon-sign.keychain
           security default-keychain -s backon-sign.keychain
           security unlock-keychain -p actions backon-sign.keychain
+          echo "P12_BYTES=$(wc -c < /tmp/backon.p12 | tr -d ' ')"
+          echo "P12_SHA256=$(shasum -a 256 /tmp/backon.p12 | cut -d' ' -f1)"
           CLEAN_PASS="$(printf '%s' "$CERT_PASSWORD" | tr -d ' \n\r\t')"
+          echo "PASS_LEN=${#CLEAN_PASS}"
           security import /tmp/backon.p12 -k backon-sign.keychain -P "$CLEAN_PASS" \
-            -T /usr/bin/codesign -T /usr/bin/security
+            -T /usr/bin/codesign -T /usr/bin/security || { echo "IMPORT_FAILED: p12 与密码不匹配"; exit 1; }
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k actions backon-sign.keychain > /dev/null
           security find-identity -v -p codesigning backon-sign.keychain
           if security find-identity -v -p codesigning backon-sign.keychain | grep -q "Backon Code Signing"; then
@@ -105,14 +118,18 @@ jobs:
         run: |
           mkdir -p ci-logs
           {
+            echo "run: ${GITHUB_RUN_ID}"
+            echo "ref: ${GITHUB_REF}"
+            echo "sha: ${GITHUB_SHA}"
             echo "job status: ${{ job.status }}"
             echo "SIGN_IDENTITY=${SIGN_IDENTITY:-unset}"
             echo "--- log tail ---"
             sed -E 's/[A-Za-z0-9+/=]{80,}/<redacted>/g' "$RUNNER_TEMP/ci.log" 2>/dev/null | tail -150
-          } > ci-logs/last.log
+          } > "ci-logs/run-${GITHUB_RUN_ID}.log"
+          cp "ci-logs/run-${GITHUB_RUN_ID}.log" ci-logs/last.log
           git config user.email ci@local
           git config user.name ci
-          git add -f ci-logs/last.log
+          git add -f ci-logs
           git commit -m "ci: diagnostics" || true
           git push origin HEAD:refs/heads/ci-log --force
 
