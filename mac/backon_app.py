@@ -42,7 +42,7 @@ def _res(name: str) -> str:
 
 MENUBAR_ICON = _res("MenuBar.png")
 
-DEFAULT_HUB = os.environ.get("HAND_HUB_URL", "https://work.backpeng.com/hand")
+DEFAULT_HUB = os.environ.get("HAND_HUB_URL", "http://47.88.53.79/hand")
 LOGIN_AGENT = os.path.expanduser("~/Library/LaunchAgents/cv.backpeng.backon.plist")
 BUNDLE_ID = "cv.backpeng.backon"
 LEGACY_AGENT_PLIST = os.path.expanduser("~/Library/LaunchAgents/cv.backpeng.ekkohand.plist")
@@ -65,7 +65,11 @@ class BackonApp(rumps.App):
             quit_button="退出",
         )
         self.state = agent.load_state()
-        self.hub = (self.state.get("hub") or DEFAULT_HUB).rstrip("/")
+        # 未配对时钉死当前默认入口（IP 直连），已配对的保留原地址
+        if self.state.get("token"):
+            self.hub = (self.state.get("hub") or DEFAULT_HUB).rstrip("/")
+        else:
+            self.hub = DEFAULT_HUB.rstrip("/")
         self.connected = False
         self.last_seen = 0.0
         self.busy = False

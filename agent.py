@@ -13,7 +13,7 @@
     # 冒烟测试：不连 hub，直接截一张看看
     python3 agent.py --selftest
 
-通信：向 hub 长轮询（默认 http://127.0.0.1:8770），出站连接，不需要公网 IP、
+通信：向 hub 长轮询（默认 http://47.88.53.79/hand，只放行配对/轮询/回传三端点），出站连接，不需要公网 IP、
 端口映射或 DDNS。心跳 = 轮询本身（首字节即证明活着），hub 判离线阈值 90s。
 
 注意（macOS）：首次运行会弹「屏幕录制」授权，必须在
@@ -38,7 +38,7 @@ import time
 import urllib.error
 import urllib.request
 
-DEFAULT_HUB = os.environ.get("HAND_HUB_URL", "http://127.0.0.1:8770")
+DEFAULT_HUB = os.environ.get("HAND_HUB_URL", "http://47.88.53.79/hand")
 DEFAULT_STATE = os.path.expanduser("~/.backon/device.json")
 LEGACY_STATE = os.path.expanduser("~/.ekkohand/device.json")  # 旧名时期的位置，只读兼容
 STATE_PATH = DEFAULT_STATE
@@ -516,7 +516,8 @@ def main() -> None:
         return
 
     state = load_state()
-    hub = (args.hub or state.get("hub") or DEFAULT_HUB).rstrip("/")
+    # 已配对的沿用记录里的地址（避免换版本后掉线）；未配对的一律用当前默认入口
+    hub = (args.hub or (state.get("hub") if state.get("token") else None) or DEFAULT_HUB).rstrip("/")
     name = args.name or state.get("name") or platform.node()
 
     if args.pair:

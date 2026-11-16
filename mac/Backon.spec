@@ -54,8 +54,8 @@ app = BUNDLE(
     info_plist={
         'CFBundleName': 'Backon',
         'CFBundleDisplayName': 'Backon',
-        'CFBundleShortVersionString': '1.0.5',
-        'CFBundleVersion': '5',
+        'CFBundleShortVersionString': '1.0.6',
+        'CFBundleVersion': '6',
         'LSUIElement': True,
         'LSMinimumSystemVersion': '11.0',
         'NSHighResolutionCapable': True,
