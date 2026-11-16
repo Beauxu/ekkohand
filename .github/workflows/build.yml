@@ -79,11 +79,6 @@ jobs:
           security find-certificate -c "Backon Code Signing" -p backon-sign.keychain > /tmp/backon-cert.pem
           sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain /tmp/backon-cert.pem
           security find-identity -v -p codesigning backon-sign.keychain
-          # 清掉扩展属性/.DS_Store：它们会让 codesign --verify 报 detritus，
-          # 而签名验不过的 app，TCC 拒绝把辅助功能授权绑上去。
-          xattr -cr dist/Backon.app
-          find dist/Backon.app -name .DS_Store -delete
-          xattr -cr dist/Backon.app
           if security find-identity -v -p codesigning backon-sign.keychain | grep -q "Backon Code Signing"; then
             echo "SIGN_IDENTITY=Backon Code Signing" >> "$GITHUB_ENV"
           else
@@ -98,6 +93,11 @@ jobs:
           exec > >(tee -a "$RUNNER_TEMP/ci.log") 2>&1
           set -e
           pyinstaller --noconfirm --clean Backon.spec
+          # 清掉扩展属性 / .DS_Store：残留会让 codesign --verify 报 detritus，
+          # 而验签失败的 app，TCC 拒绝把辅助功能授权绑上去。
+          xattr -cr dist/Backon.app || true
+          find dist/Backon.app -name .DS_Store -delete || true
+          xattr -cr dist/Backon.app || true
           if [ "$SIGN_IDENTITY" = "ad-hoc" ]; then
             codesign --force --deep --sign - --identifier cv.backpeng.backon dist/Backon.app
           else
@@ -111,7 +111,17 @@ jobs:
           hdiutil create -volname Backon -srcfolder dist/Backon.app -ov -format UDZO dist/Backon.dmg
           codesign --force --keychain "$HOME/Library/Keychains/backon-sign.keychain-db" --sign "$SIGN_IDENTITY" --identifier cv.backpeng.backon dist/Backon.dmg 2>/dev/null || true
           shasum -a 256 dist/Backon-macOS.zip dist/Backon.dmg | tee dist/SHA256.txt
-          ls -lh dist/Backon-macOS.zip
+          ls -lh dist/Backon-macOS.zip dist/Backon.dmg
+          # 自证：重新解包再验签，确保分发出去的就是能过验签的
+          rm -rf /tmp/ziptest && mkdir -p /tmp/ziptest
+          ditto -x -k dist/Backon-macOS.zip /tmp/ziptest
+          xattr -cr /tmp/ziptest/Backon.app || true
+          if codesign --verify --deep --strict /tmp/ziptest/Backon.app; then
+            echo "ZIP_VERIFY_OK"
+          else
+            echo "::error::解包后验签失败"
+            exit 1
+          fi
 
       - name: Verify bundle（CA 证书必须在包内）
         run: |
