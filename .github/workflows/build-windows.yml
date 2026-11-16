@@ -38,10 +38,16 @@ jobs:
 
       - name: Build exe
         working-directory: win
+        shell: pwsh
         env:
           PYTHONPATH: ..
-          BACKON_VERSION: ${{ github.ref_name }}
         run: |
+          # 版本号：打 tag 时取 tag 里的数字（ekkohand-win-v1.1.8 → 1.1.8），
+          # 否则用默认值。别把 "main" 当版本写进心跳。
+          $ver = "1.1.8"
+          if ($env:GITHUB_REF -like 'refs/tags/*') { $ver = ($env:GITHUB_REF -replace '.*-v', '') }
+          $env:BACKON_VERSION = $ver
+          Write-Host "BACKON_VERSION=$ver"
           pyinstaller --noconfirm --clean EkkoHand.spec *>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\ci.log"
 
       - name: Verify bundle
