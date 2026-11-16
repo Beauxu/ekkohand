@@ -31,6 +31,17 @@ import agent  # noqa: E402  hand/agent.py
 
 import rumps  # noqa: E402
 
+def _res(name: str) -> str:
+    """打包后在 _MEIPASS 根目录；开发态在 assets/ 下。"""
+    base = getattr(sys, "_MEIPASS", None) or os.path.join(HERE, "assets")
+    for cand in (os.path.join(base, name), os.path.join(HERE, "assets", name)):
+        if os.path.exists(cand):
+            return cand
+    return ""
+
+
+MENUBAR_ICON = _res("MenuBar.png")
+
 DEFAULT_HUB = os.environ.get("HAND_HUB_URL", "https://work.backpeng.com/hand")
 LOGIN_AGENT = os.path.expanduser("~/Library/LaunchAgents/cv.backpeng.ekkohand.plist")
 BUNDLE_ID = "cv.backpeng.ekkohand"
@@ -45,12 +56,19 @@ def open_privacy(pane: str) -> None:
 
 class EkkoHandApp(rumps.App):
     def __init__(self) -> None:
-        super().__init__("EkkoHand", title="EH", quit_button="退出")
+        super().__init__(
+            "EkkoHand",
+            title="",
+            icon=MENUBAR_ICON or None,
+            template=bool(MENUBAR_ICON),
+            quit_button="退出",
+        )
         self.state = agent.load_state()
         self.hub = (self.state.get("hub") or DEFAULT_HUB).rstrip("/")
         self.connected = False
         self.last_seen = 0.0
         self.busy = False
+        self.pairing = False
         self.err = ""
 
         self.status_item = rumps.MenuItem("○ 未配对")
@@ -75,23 +93,27 @@ class EkkoHandApp(rumps.App):
 
     # ── 状态显示 ──────────────────────────────────────────────
     def refresh(self, _timer=None) -> None:
+        if self.pairing:
+            self.status_item.title = "◐ 配对中…"
+            self.title = "…"
+            return
         if not self.state.get("token"):
             self.status_item.title = "○ 未配对"
             self.device_item.title = "设备：—"
-            self.title = "EH?"  # 带问号：提示还需要配对
+            self.title = "?"  # 带问号：提示还需要配对
             return
         name = self.state.get("name") or platform.node()
         self.device_item.title = f"设备：{name}"
         if self.busy:
             self.status_item.title = f"◐ 执行中… {self.err}".strip()
-            self.title = "EH•"
+            self.title = "•"
         elif self.connected:
             ago = int(time.time() - self.last_seen) if self.last_seen else 0
             self.status_item.title = f"● 已连接 · {ago}s 前心跳"
-            self.title = "EH"
+            self.title = ""
         else:
             self.status_item.title = f"○ 未连接{('：' + self.err) if self.err else ''}"
-            self.title = "EH!"
+            self.title = "!"
 
     # ── 主循环：长轮询 ────────────────────────────────────────
     def poll_loop(self) -> None:
@@ -161,31 +183,61 @@ class EkkoHandApp(rumps.App):
                 backoff = min(backoff * 2, 30.0)
 
     # ── 菜单动作 ──────────────────────────────────────────────
+    def _ui(self, fn) -> None:
+        """把回调丢回主线程执行（rumps 的对话框应跑在主线程）。"""
+        def fire(timer) -> None:
+            timer.stop()
+            fn()
+        rumps.Timer(fire, 0.1).start()
+
     def act_pair(self, _sender) -> None:
+        if self.pairing:
+            return
         win = rumps.Window(
             title="配对 EkkoHand",
-            message="在工作台「设备」页生成 6 位配对码，粘贴到这里：",
+            message="在工作台「设备」页生成 6 位配对码，粘贴到这里：\n\n"
+                    "不想配对就直接点「取消」——本程序会安静待在菜单栏，"
+                    "随时可从菜单点「退出」关掉它。",
             default_text="",
             ok="配对",
             cancel="取消",
-            dimensions=(280, 24),
+            dimensions=(300, 24),
         )
         resp = win.run()
         code = (resp.text or "").strip()
         if not resp.clicked or not code:
             return
-        try:
-            name = self.state.get("name") or platform.node()
-            self.state = agent.do_pair(self.hub, code, name)
-            self.hub = self.state["hub"].rstrip("/")
+        # 网络请求必须离开主线程：否则配对期间菜单栏整只 app 无响应（最长 20s），
+        # 用户会以为「关不掉」。
+        self.pairing = True
+        self.err = ""
+        self.refresh()
+
+        def worker() -> None:
+            try:
+                name = self.state.get("name") or platform.node()
+                state = agent.do_pair(self.hub, code, name)
+            except BaseException as exc:  # noqa: BLE001  SystemExit 也接住
+                msg = str(exc) if isinstance(exc, SystemExit) else f"{type(exc).__name__}: {exc}"
+                self.pairing = False
+                self.err = "配对失败"
+                self.refresh()
+
+                def show() -> None:
+                    rumps.alert("配对失败", f"{msg}\n\n可以再点「输入配对码…」重试，"
+                                         "或者从菜单点「退出」直接关掉本程序。")
+                self._ui(show)
+                return
+            self.state = state
+            self.hub = state["hub"].rstrip("/")
             self.connected = False
+            self.pairing = False
             self.err = ""
             self.refresh()
-            rumps.notification("EkkoHand", "配对成功", f"设备名：{self.state.get('name')}")
-        except SystemExit as exc:  # do_pair 用 SystemExit 报错
-            rumps.alert("配对失败", str(exc))
-        except Exception as exc:  # noqa: BLE001
-            rumps.alert("配对失败", f"{type(exc).__name__}: {exc}")
+            self._ui(lambda: rumps.notification(
+                "EkkoHand", "配对成功", f"设备名：{state.get('name')}"))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def act_selftest(self, _sender) -> None:
         ok, result, err = agent.run_task("screenshot", {"max_edge": 0})

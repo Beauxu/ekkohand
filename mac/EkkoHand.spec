@@ -9,8 +9,8 @@ a = Analysis(
     ['ekkohand_app.py'],
     pathex=['..'],          # ../agent.py
     binaries=[],
-    datas=[],
-    hiddenimports=['agent', 'rumps'],
+    datas=[('assets/MenuBar.png', '.'), ('assets/MenuBar@2x.png', '.')],
+    hiddenimports=['agent', 'rumps', 'Quartz', 'AppKit', 'Foundation'],
     hookspath=[],
     runtime_hooks=[],
     excludes=['tkinter', 'unittest', 'pydoc'],
@@ -40,13 +40,13 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name='EkkoHand.app',
-    icon=None,
+    icon='assets/AppIcon.icns',
     bundle_identifier='cv.backpeng.ekkohand',
     info_plist={
         'CFBundleName': 'EkkoHand',
         'CFBundleDisplayName': 'EkkoHand',
-        'CFBundleShortVersionString': '1.0.0',
-        'CFBundleVersion': '1',
+        'CFBundleShortVersionString': '1.0.3',
+        'CFBundleVersion': '3',
         'LSUIElement': True,
         'LSMinimumSystemVersion': '11.0',
         'NSHighResolutionCapable': True,

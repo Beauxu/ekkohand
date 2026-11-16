@@ -161,6 +161,201 @@ def scale_png(data: bytes, max_edge: int) -> tuple[bytes, bool]:
 
 
 # ── 任务执行 ──────────────────────────────────────────────────
+# ── 本机能力：文件 / 命令 / 输入 ────────────────────────────────
+# 全部在用户自己这台机器上执行；能不能做由 Ekko 会话审批把关（写文件/跑脚本/点击是 T2）。
+_FS_READ_LIMIT = 400_000
+
+_KEYCODES_MAC = {
+    "return": 36, "enter": 36, "tab": 48, "space": 49, "escape": 53, "esc": 53,
+    "delete": 51, "backspace": 51, "forwarddelete": 117,
+    "left": 123, "right": 124, "down": 125, "up": 126,
+    "home": 115, "end": 119, "pageup": 116, "pagedown": 121,
+    "f1": 122, "f2": 120, "f3": 99, "f4": 118, "f5": 96, "f6": 97,
+    "f7": 98, "f8": 100, "f9": 101, "f10": 109, "f11": 103, "f12": 111,
+}
+_MODS_MAC = {"cmd": 55, "command": 55, "shift": 56, "alt": 58, "option": 58,
+             "ctrl": 59, "control": 59, "fn": 63}
+
+
+def _abs(path) -> str:
+    raw = str(path or "~").strip() or "~"
+    return os.path.abspath(os.path.expanduser(raw))
+
+
+def _clip(text: str, limit: int = 6000) -> str:
+    if len(text) <= limit:
+        return text
+    return text[: limit // 2] + f"\n…（省略 {len(text) - limit} 字符）…\n" + text[-limit // 2:]
+
+
+def _input_backend() -> str | None:
+    """本机可用的输入注入后端。Mac 优先 pyobjc(Quartz)，退而 osascript；Linux 用 xdotool。"""
+    if platform.system() == "Darwin":
+        try:
+            import Quartz  # noqa: F401
+            return "quartz"
+        except Exception:
+            return "osascript" if shutil.which("osascript") else None
+    if platform.system() == "Linux" and shutil.which("xdotool"):
+        return "xdotool"
+    return None
+
+
+def caps() -> list[str]:
+    out = ["screenshot", "fs.list", "fs.read", "fs.write", "script.run"]
+    if _input_backend():
+        out += ["input.click", "input.type", "input.key"]
+    return out
+
+
+def op_fs_list(params: dict) -> dict:
+    target = _abs(params.get("path"))
+    if not os.path.isdir(target):
+        raise ValueError(f"不是目录：{target}")
+    rows = []
+    with os.scandir(target) as it:
+        for entry in it:
+            if entry.name.startswith(".") and not params.get("hidden"):
+                continue
+            try:
+                st = entry.stat()
+            except OSError:
+                continue
+            rows.append({
+                "name": entry.name,
+                "type": "dir" if entry.is_dir() else "file",
+                "size": None if entry.is_dir() else st.st_size,
+                "modified": int(st.st_mtime),
+            })
+    rows.sort(key=lambda r: (r["type"] != "dir", r["name"].lower()))
+    total = len(rows)
+    limit = max(1, min(int(params.get("limit") or 200), 1000))
+    return {"path": target, "total": total, "entries": rows[:limit], "truncated": total > limit}
+
+
+def op_fs_read(params: dict) -> dict:
+    target = _abs(params.get("path"))
+    limit = max(1024, min(int(params.get("max_bytes") or _FS_READ_LIMIT), 4_000_000))
+    with open(target, "rb") as fh:
+        blob = fh.read(limit + 1)
+    truncated = len(blob) > limit
+    blob = blob[:limit]
+    try:
+        text = blob.decode("utf-8")
+    except UnicodeDecodeError:
+        return {"path": target, "binary": True, "bytes": len(blob), "truncated": truncated,
+                "content_b64": base64.b64encode(blob).decode()}
+    return {"path": target, "binary": False, "bytes": len(blob), "truncated": truncated,
+            "content": _clip(text)}
+
+
+def op_fs_write(params: dict) -> dict:
+    target = _abs(params.get("path"))
+    if params.get("content") is None:
+        raise ValueError("content 不能为空")
+    content = str(params.get("content"))
+    mode = str(params.get("mode") or "overwrite")
+    os.makedirs(os.path.dirname(target) or ".", exist_ok=True)
+    existed = os.path.exists(target)
+    with open(target, "a" if mode == "append" else "w", encoding="utf-8", newline="") as fh:
+        fh.write(content)
+    return {"path": target, "mode": mode, "existed": existed,
+            "bytes": len(content.encode("utf-8"))}
+
+
+def op_script_run(params: dict) -> dict:
+    script = str(params.get("script") or "").strip()
+    if not script:
+        raise ValueError("script 为空")
+    timeout = max(1.0, min(float(params.get("timeout") or 30), 120.0))
+    cwd = _abs(params.get("cwd") or "~")
+    if not os.path.isdir(cwd):
+        cwd = _abs("~")
+    shell = str(params.get("shell") or ("/bin/zsh" if platform.system() == "Darwin" else "/bin/sh"))
+    started = time.time()
+    proc = subprocess.run([shell, "-lc", script], capture_output=True, text=True,
+                          timeout=timeout, cwd=cwd)
+    return {"exit_code": proc.returncode, "cwd": cwd,
+            "duration_ms": int((time.time() - started) * 1000),
+            "stdout": _clip(proc.stdout), "stderr": _clip(proc.stderr)}
+
+
+def op_input_click(params: dict) -> dict:
+    backend = _input_backend()
+    try:
+        x, y = int(params.get("x")), int(params.get("y"))
+    except (TypeError, ValueError):
+        raise ValueError("需要整数坐标 x / y")
+    if backend == "quartz":
+        import Quartz as Q
+        point = (x, y)
+        for kind in (Q.kCGEventMouseMoved, Q.kCGEventLeftMouseDown, Q.kCGEventLeftMouseUp):
+            Q.CGEventPost(Q.kCGHIDEventTap, Q.CGEventCreateMouseEvent(None, kind, point, Q.kCGMouseButtonLeft))
+        return {"x": x, "y": y, "backend": "quartz"}
+    if backend == "xdotool":
+        subprocess.run(["xdotool", "mousemove", str(x), str(y), "click", "1"], check=True, timeout=10)
+        return {"x": x, "y": y, "backend": "xdotool"}
+    raise RuntimeError("这台设备没有输入注入能力（Mac 需要 pyobjc 或 osascript，Linux 需要 xdotool）")
+
+
+def op_input_type(params: dict) -> dict:
+    text = str(params.get("text") or "")
+    if not text:
+        raise ValueError("text 为空")
+    backend = _input_backend()
+    if backend == "quartz":
+        import Quartz as Q
+        for ch in text:
+            for down in (True, False):
+                ev = Q.CGEventCreateKeyboardEvent(None, 0, down)
+                Q.CGEventKeyboardSetUnicodeString(ev, len(ch), ch)
+                Q.CGEventPost(Q.kCGHIDEventTap, ev)
+        return {"typed": len(text), "backend": "quartz"}
+    if backend == "xdotool":
+        subprocess.run(["xdotool", "type", "--clearmodifiers", "--", text], check=True, timeout=60)
+        return {"typed": len(text), "backend": "xdotool"}
+    raise RuntimeError("这台设备没有输入注入能力（Mac 需要在系统设置里授予「辅助功能」）")
+
+
+_XDOTOOL_KEYS = {"cmd": "super", "command": "super", "option": "alt", "return": "Return",
+                 "enter": "Return", "escape": "Escape", "esc": "Escape", "delete": "BackSpace",
+                 "pageup": "Page_Up", "pagedown": "Page_Down", "space": "space"}
+
+
+def op_input_key(params: dict) -> dict:
+    combo = str(params.get("keys") or "").strip().lower()
+    if not combo:
+        raise ValueError("keys 为空，例如 return / cmd+space / shift+tab")
+    parts = [p for p in combo.replace(" ", "").split("+") if p]
+    backend = _input_backend()
+    if backend == "quartz":
+        import Quartz as Q
+        mods = [_MODS_MAC[p] for p in parts[:-1] if p in _MODS_MAC]
+        name = parts[-1]
+        code = _KEYCODES_MAC.get(name)
+        if code is None and len(name) == 1:
+            for ch in name:
+                for down in (True, False):
+                    ev = Q.CGEventCreateKeyboardEvent(None, 0, down)
+                    Q.CGEventKeyboardSetUnicodeString(ev, len(ch), ch)
+                    Q.CGEventPost(Q.kCGHIDEventTap, ev)
+            return {"keys": combo, "backend": "quartz"}
+        if code is None:
+            raise ValueError(f"不认识的键名：{name}")
+        for m in mods:
+            Q.CGEventPost(Q.kCGHIDEventTap, Q.CGEventCreateKeyboardEvent(None, m, True))
+        Q.CGEventPost(Q.kCGHIDEventTap, Q.CGEventCreateKeyboardEvent(None, code, True))
+        Q.CGEventPost(Q.kCGHIDEventTap, Q.CGEventCreateKeyboardEvent(None, code, False))
+        for m in reversed(mods):
+            Q.CGEventPost(Q.kCGHIDEventTap, Q.CGEventCreateKeyboardEvent(None, m, False))
+        return {"keys": combo, "backend": "quartz"}
+    if backend == "xdotool":
+        mapped = "+".join(_XDOTOOL_KEYS.get(p, p) for p in parts)
+        subprocess.run(["xdotool", "key", "--clearmodifiers", mapped], check=True, timeout=10)
+        return {"keys": combo, "backend": "xdotool"}
+    raise RuntimeError("这台设备没有输入注入能力（Mac 需要在系统设置里授予「辅助功能」）")
+
+
 def run_task(method: str, params: dict) -> tuple[bool, dict, str | None]:
     try:
         if method == "screenshot":
@@ -172,6 +367,20 @@ def run_task(method: str, params: dict) -> tuple[bool, dict, str | None]:
                 "width": w, "height": h, "scaled": scaled,
                 "bytes": len(data),
             }, None
+        if method == "fs.list":
+            return True, op_fs_list(params), None
+        if method == "fs.read":
+            return True, op_fs_read(params), None
+        if method == "fs.write":
+            return True, op_fs_write(params), None
+        if method == "script.run":
+            return True, op_script_run(params), None
+        if method == "input.click":
+            return True, op_input_click(params), None
+        if method == "input.type":
+            return True, op_input_type(params), None
+        if method == "input.key":
+            return True, op_input_key(params), None
         return False, {}, f"设备不支持的方法：{method}"
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or b"").decode("utf-8", "replace")[:300]
@@ -217,7 +426,8 @@ def save_state(state: dict) -> None:
 
 
 def do_pair(base: str, code: str, name: str) -> dict:
-    status, body = post(base, "/pair", {"code": code, "name": name, "fingerprint": fingerprint()}, 20)
+    status, body = post(base, "/pair", {"code": code, "name": name,
+                                       "fingerprint": fingerprint(), "caps": caps()}, 20)
     if status != 200:
         raise SystemExit(f"配对失败（{status}）：{body.get('error') or body}")
     state = {"hub": base, "device_id": body["device_id"], "token": body["token"],
