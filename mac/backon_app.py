@@ -45,7 +45,7 @@ MENUBAR_ICON = _res("MenuBar.png")
 DEFAULT_HUB = os.environ.get("HAND_HUB_URL", "http://47.88.53.79/hand")
 LOGIN_AGENT = os.path.expanduser("~/Library/LaunchAgents/cv.backpeng.backon.plist")
 BUNDLE_ID = "cv.backpeng.backon"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 LEGACY_AGENT_PLIST = os.path.expanduser("~/Library/LaunchAgents/cv.backpeng.ekkohand.plist")
 
 
@@ -103,6 +103,44 @@ def accessibility_allowed() -> bool | None:
         return None
 
 
+def request_accessibility() -> bool | None:
+    """向系统「请求」辅助功能授权。
+
+    只调 AXIsProcessTrusted() 是纯查询，不会让条目出现在列表里；
+    系统要看到 prompt 选项才把当前这个二进制登记进去。之前只打开了设置页，
+    用户在列表里勾到的是旧版本 Backon —— 所以「勾了却不生效」。
+    """
+    q = _quartz()
+    fn = getattr(q, "AXIsProcessTrustedWithOptions", None) if q else None
+    key = getattr(q, "kAXTrustedCheckOptionPrompt", None) if q else None
+    if fn is None or key is None:
+        try:
+            import ApplicationServices as _as  # noqa: PLC0415
+        except Exception:  # noqa: BLE001
+            return None
+        fn = getattr(_as, "AXIsProcessTrustedWithOptions", None)
+        key = getattr(_as, "kAXTrustedCheckOptionPrompt", None)
+    if fn is None or key is None:
+        return None
+    try:
+        return bool(fn({key: True}))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def sign_identity() -> str:
+    """自己签出来的是什么（ad-hoc / 证书名），排查权限问题时很关键。"""
+    try:
+        out = subprocess.run(["codesign", "-dvv", sys.executable],
+                             capture_output=True, text=True, timeout=5).stderr
+    except Exception:  # noqa: BLE001
+        return "未知"
+    for line in out.splitlines():
+        if line.startswith("Authority="):
+            return line.split("=", 1)[1]
+    return "ad-hoc"
+
+
 def probe_screen_capture() -> tuple[bool, str]:
     """真拍一张，返回 (是否成功, 错误)。比 preflight 更硬。"""
     try:
@@ -151,6 +189,7 @@ class BackonApp(rumps.App):
             None,
             rumps.MenuItem("打开屏幕录制设置…", callback=lambda _: open_privacy("Privacy_ScreenCapture")),
             rumps.MenuItem("打开辅助功能设置…", callback=lambda _: open_privacy("Privacy_Accessibility")),
+            rumps.MenuItem("重置并重新请求辅助功能", callback=self.act_fix_ax),
             None,
             rumps.MenuItem("开机启动", callback=self.act_login),
             None,
@@ -173,7 +212,7 @@ class BackonApp(rumps.App):
         if ax is True:
             self.perm_ax_item.title = "✅ 辅助功能：已生效"
         elif ax is False:
-            self.perm_ax_item.title = "⚠️ 辅助功能：没生效（点这里查原因）"
+            self.perm_ax_item.title = "⚠️ 辅助功能：没生效（点这里请求授权）"
         else:
             self.perm_ax_item.title = "？ 辅助功能：问不出来"
 
@@ -214,12 +253,51 @@ class BackonApp(rumps.App):
         if accessibility_allowed() is True:
             rumps.alert("辅助功能：可用", "已授权，模拟点击/键盘输入可以正常工作。")
             return
+        granted = request_accessibility()
+        self.refresh_perms()
+        if granted:
+            rumps.alert(
+                "辅助功能：已登记",
+                "系统已把当前这个 Backon 记进清单，但本进程还读不到授权。\n\n"
+                "点菜单里的「重启 Backon（授权后必做）」，重启后就会变成 ✅。",
+            )
+            return
         rumps.alert(
-            "辅助功能：没生效",
-            "在「系统设置 → 隐私与安全性 → 辅助功能」里勾上 Backon"
-            "（列表里若有同名旧条目，删掉只留一条），然后点「重启 Backon（授权后必做）」。",
+            "辅助功能：还没授权",
+            "已向系统发出授权请求（会弹一个窗）。\n\n"
+            "若清单里有多条 Backon，只保留正在运行的这一条：\n"
+            + sys.executable + "\n\n"
+            "勾上后点「重启 Backon（授权后必做）」。",
         )
         open_privacy("Privacy_Accessibility")
+
+    def act_fix_ax(self, _sender) -> None:
+        """清掉 TCC 里的旧记录再重新请求。
+
+        ad-hoc 时代留下的死条目（cdhash 对不上）在界面上删不干净，
+        只能 tccutil 直接清，然后让系统按当前这个二进制重新登记。
+        """
+        try:
+            subprocess.run(["tccutil", "reset", "Accessibility", BUNDLE_ID],
+                           check=False, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL)
+        except Exception:  # noqa: BLE001
+            pass
+        granted = request_accessibility()
+        self.refresh_perms()
+        if granted:
+            rumps.alert(
+                "已重置并重新登记",
+                "系统已清掉旧记录，并把当前这个 Backon 重新登记。\n\n"
+                "点「重启 Backon（授权后必做）」，重启后应该就是 ✅。",
+            )
+        else:
+            rumps.alert(
+                "已重置",
+                "旧记录清掉了，但这次系统没有直接给出授权。\n\n"
+                "请在「辅助功能」里重新勾上 Backon，再点「重启 Backon」。",
+            )
+            open_privacy("Privacy_Accessibility")
 
     def act_restart(self, _sender) -> None:
         # 屏幕录制授权只有在进程重新启动后才生效，所以给一个一键重启，
@@ -419,6 +497,7 @@ class BackonApp(rumps.App):
         lines = [
             f"程序：{sys.executable}",
             f"版本：{APP_VERSION}",
+            f"签名：{sign_identity()}",
             f"屏幕录制：{screen_capture_allowed()}",
             f"辅助功能：{accessibility_allowed()}",
             f"hub：{self.hub}",

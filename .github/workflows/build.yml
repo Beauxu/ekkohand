@@ -30,11 +30,50 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install pyobjc-framework-Cocoa rumps pyinstaller certifi
 
+      # 稳定签名身份：ad-hoc 的 designated requirement 是 cdhash，重构建一次
+      # 就变一次，TCC（屏幕录制/辅助功能）授权因此反复失效。换成固定证书后
+      # DR 变成 identifier + 证书，更新多少次都不用重新授权。
+      # 未配置 secret 时自动退回 ad-hoc，不会把 CI 弄挂。
+      - name: Import signing identity
+        env:
+          CERT_P12: ${{ secrets.BACKON_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.BACKON_CERT_PASSWORD }}
+        run: |
+          set -e
+          if [ -z "$CERT_P12" ]; then
+            echo "SIGN_IDENTITY=ad-hoc" >> "$GITHUB_ENV"
+            echo "::warning::未配置 BACKON_CERT_P12，退回 ad-hoc 签名（TCC 会随版本失效）"
+            exit 0
+          fi
+          echo "$CERT_P12" | base64 --decode > /tmp/backon.p12
+          security create-keychain -p actions backon-sign.keychain
+          security default-keychain -s backon-sign.keychain
+          security unlock-keychain -p actions backon-sign.keychain
+          security import /tmp/backon.p12 -k backon-sign.keychain -P "$CERT_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k actions backon-sign.keychain > /dev/null
+          security find-identity -v -p codesigning backon-sign.keychain
+          if security find-identity -v -p codesigning backon-sign.keychain | grep -q "Backon Code Signing"; then
+            echo "SIGN_IDENTITY=Backon Code Signing" >> "$GITHUB_ENV"
+          else
+            echo "SIGN_IDENTITY=ad-hoc" >> "$GITHUB_ENV"
+            echo "::error::证书导入成功但没找到 Backon Code Signing 身份"
+          fi
+          rm -f /tmp/backon.p12
+
       - name: Build .app
         working-directory: mac
         run: |
+          set -e
           pyinstaller --noconfirm --clean Backon.spec
-          codesign --force --deep --sign - --identifier cv.backpeng.backon dist/Backon.app
+          if [ "$SIGN_IDENTITY" = "ad-hoc" ]; then
+            codesign --force --deep --sign - --identifier cv.backpeng.backon dist/Backon.app
+          else
+            codesign --force --deep --sign "$SIGN_IDENTITY" --identifier cv.backpeng.backon dist/Backon.app
+          fi
+          echo "--- 签名结果 ---"
+          codesign -dvv dist/Backon.app 2>&1 | grep -E 'Identifier|Authority|TeamIdentifier|CDHash' || true
+          codesign --verify --deep --strict dist/Backon.app && echo "VERIFY_OK"
           ditto -c -k --keepParent dist/Backon.app dist/Backon-macOS.zip
           shasum -a 256 dist/Backon-macOS.zip | tee dist/SHA256.txt
           ls -lh dist/Backon-macOS.zip
@@ -65,7 +104,11 @@ jobs:
             mac/dist/SHA256.txt
           generate_release_notes: true
           body: |
-            macOS 菜单栏客户端（arm64，ad-hoc 签名）。
+            macOS 菜单栏客户端（arm64）。
+
+            本版改用固定代码签名证书，屏幕录制/辅助功能授权只需给一次，
+            之后更新不再失效。**首次安装前**请先把随包附带的
+            `backon-cert.crt` 导入「钥匙串访问」并设为「始终信任」。
 
             安装：解压 → 把 Backon.app 拖进「应用程序」→ 双击 →
             菜单栏出现 EH → 输入工作台生成的 6 位配对码。

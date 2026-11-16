@@ -19,7 +19,7 @@ a = Analysis(
     pathex=['..'],          # ../agent.py
     binaries=[],
     datas=[('assets/MenuBar.png', '.'), ('assets/MenuBar@2x.png', '.')] + _certifi_datas,
-    hiddenimports=['agent', 'rumps', 'Quartz', 'AppKit', 'Foundation', 'certifi'],
+    hiddenimports=['agent', 'rumps', 'Quartz', 'ApplicationServices', 'AppKit', 'Foundation', 'certifi'],
     hookspath=[],
     runtime_hooks=[],
     excludes=['tkinter', 'unittest', 'pydoc'],
@@ -54,8 +54,8 @@ app = BUNDLE(
     info_plist={
         'CFBundleName': 'Backon',
         'CFBundleDisplayName': 'Backon',
-        'CFBundleShortVersionString': '1.1.0',
-        'CFBundleVersion': '11',
+        'CFBundleShortVersionString': '1.1.1',
+        'CFBundleVersion': '12',
         'LSUIElement': True,
         'LSMinimumSystemVersion': '11.0',
         'NSHighResolutionCapable': True,
