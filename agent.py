@@ -218,9 +218,10 @@ def _input_backend() -> str | None:
 
 
 def caps() -> list[str]:
-    out = ["screenshot", "fs.list", "fs.read", "fs.write", "script.run"]
+    out = ["screenshot", "fs.list", "fs.read", "fs.write", "fs.delete", "fs.move",
+           "script.run", "app.list", "app.launch"]
     if _input_backend():
-        out += ["input.click", "input.type", "input.key"]
+        out += ["input.click", "input.type", "input.key", "input.drag", "input.scroll"]
     return out
 
 
@@ -372,6 +373,194 @@ def op_input_key(params: dict) -> dict:
     raise RuntimeError("这台设备没有输入注入能力（Mac 需要在系统设置里授予「辅助功能」）")
 
 
+def _quad(points: list[tuple[float, float]], kinds: list[int], Q) -> None:
+    for kind, point in zip(kinds, points):
+        Q.CGEventPost(
+            Q.kCGHIDEventTap,
+            Q.CGEventCreateMouseEvent(None, kind, point, Q.kCGMouseButtonLeft),
+        )
+
+
+def op_input_drag(params: dict) -> dict:
+    """从 (x1,y1) 按住拖到 (x2,y2)。Mac 走按住 + 分步 LeftMouseDragged，Linux 走 xdotool。"""
+    try:
+        x1, y1 = int(params.get("x1")), int(params.get("y1"))
+        x2, y2 = int(params.get("x2")), int(params.get("y2"))
+    except (TypeError, ValueError):
+        raise ValueError("需要整数坐标 x1 / y1 / x2 / y2")
+    steps = max(2, min(int(params.get("steps") or 12), 60))
+    backend = _input_backend()
+    if backend == "quartz":
+        import Quartz as Q
+        points: list[tuple[float, float]] = [(x1, y1)]
+        points.append((x1, y1))
+        for i in range(1, steps + 1):
+            points.append((x1 + (x2 - x1) * i / steps, y1 + (y2 - y1) * i / steps))
+        points.append((x2, y2))
+        kinds = [Q.kCGEventMouseMoved, Q.kCGEventLeftMouseDown]
+        kinds += [Q.kCGEventLeftMouseDragged] * steps
+        kinds.append(Q.kCGEventLeftMouseUp)
+        _quad(points, kinds, Q)
+        return {"x1": x1, "y1": y1, "x2": x2, "y2": y2, "steps": steps, "backend": "quartz"}
+    if backend == "xdotool":
+        subprocess.run(["xdotool", "mousemove", str(x1), str(y1), "mousedown", "1"],
+                       check=True, timeout=10)
+        subprocess.run(["xdotool", "mousemove", "--sync", str(x2), str(y2)],
+                       check=True, timeout=10)
+        subprocess.run(["xdotool", "mouseup", "1"], check=True, timeout=10)
+        return {"x1": x1, "y1": y1, "x2": x2, "y2": y2, "steps": 1, "backend": "xdotool"}
+    raise RuntimeError("这台设备没有输入注入能力（Mac 需要 pyobjc，Linux 需要 xdotool）")
+
+
+def op_input_scroll(params: dict) -> dict:
+    """滚轮。amount 正数向下滚、负数向上滚，单位是「行」。"""
+    if params.get("amount") is None:
+        raise ValueError("需要 amount（正数向下、负数向上，单位：行）")
+    try:
+        amount = int(params.get("amount"))
+    except (TypeError, ValueError):
+        raise ValueError("amount 必须是整数")
+    if amount == 0:
+        raise ValueError("amount 不能为 0")
+    amount = max(-100, min(amount, 100))
+    backend = _input_backend()
+    if backend == "quartz":
+        import Quartz as Q
+        event = Q.CGEventCreateScrollWheelEvent(None, Q.kCGScrollEventUnitLine, 1, amount)
+        Q.CGEventPost(Q.kCGHIDEventTap, event)
+        return {"amount": amount, "unit": "line", "backend": "quartz"}
+    if backend == "xdotool":
+        button = "5" if amount > 0 else "4"
+        for _ in range(abs(amount)):
+            subprocess.run(["xdotool", "click", button], check=True, timeout=10)
+        return {"amount": amount, "unit": "line", "backend": "xdotool"}
+    raise RuntimeError("这台设备没有输入注入能力（Mac 需要 pyobjc，Linux 需要 xdotool）")
+
+
+def _mac_app_dirs() -> list[str]:
+    home = os.path.expanduser("~")
+    return ["/Applications", "/System/Applications",
+            os.path.join(home, "Applications"),
+            "/System/Applications/Utilities"]
+
+
+def op_app_list(params: dict) -> dict:
+    """列本机已安装的 App（名字 + 路径），可按 query 过滤名字。"""
+    query = str(params.get("query") or "").strip().lower()
+    limit = max(1, min(int(params.get("limit") or 200), 500))
+    rows: list[dict] = []
+    if platform.system() == "Darwin":
+        seen = set()
+        for folder in _mac_app_dirs():
+            if not os.path.isdir(folder):
+                continue
+            try:
+                entries = list(os.scandir(folder))
+            except OSError:
+                continue
+            for entry in entries:
+                if not entry.name.endswith(".app"):
+                    continue
+                name = entry.name[:-4]
+                if query and query not in name.lower():
+                    continue
+                if entry.path in seen:
+                    continue
+                seen.add(entry.path)
+                rows.append({"name": name, "path": entry.path, "folder": folder})
+    else:
+        for folder in ("/usr/share/applications", os.path.expanduser("~/.local/share/applications")):
+            if not os.path.isdir(folder):
+                continue
+            for entry in os.scandir(folder):
+                if not entry.name.endswith(".desktop"):
+                    continue
+                name = entry.name[:-8]
+                try:
+                    with open(entry.path, encoding="utf-8", errors="replace") as fh:
+                        for line in fh:
+                            if line.startswith("Name=") and name == entry.name[:-8]:
+                                name = line.strip().split("=", 1)[1]
+                            if line.startswith("NoDisplay=true"):
+                                name = ""
+                                break
+                except OSError:
+                    pass
+                if not name:
+                    continue
+                if query and query not in name.lower():
+                    continue
+                rows.append({"name": name, "path": entry.path, "folder": folder})
+    rows.sort(key=lambda r: r["name"].lower())
+    total = len(rows)
+    return {"apps": rows[:limit], "total": total, "truncated": total > limit}
+
+
+def op_app_launch(params: dict) -> dict:
+    """打开一个 App（已在运行时等于切到前台，所以不再单独提供 app.focus）。"""
+    target = str(params.get("path") or "").strip()
+    name = str(params.get("name") or "").strip()
+    if not target and not name:
+        raise ValueError("需要 name 或 path")
+    if platform.system() == "Darwin":
+        cmd = ["open", "-a", name] if name and not target else ["open", target]
+        subprocess.run(cmd, check=True, timeout=30)
+        return {"launched": name or target, "backend": "open"}
+    if target:
+        subprocess.run(["xdg-open", target], check=True, timeout=30)
+    else:
+        subprocess.run(["gtk-launch", name], check=True, timeout=30)
+    return {"launched": name or target, "backend": "xdg-open"}
+
+
+def _guard_destructive(target: str) -> None:
+    """删/移之前挡一下明显不该动的路径：根目录、家目录本身和它的一级目录。"""
+    home = os.path.expanduser("~").rstrip("/")
+    if target in ("/", home, "/Users", "/System", "/etc", "/usr", "/bin", "/sbin"):
+        raise ValueError(f"拒绝操作受保护路径：{target}")
+
+
+def op_fs_delete(params: dict) -> dict:
+    """删除文件或目录。目录必须显式 recursive=true；返回删掉的条目数与字节数。"""
+    target = _abs(params.get("path"))
+    _guard_destructive(target)
+    if not os.path.exists(target) and not os.path.islink(target):
+        raise ValueError(f"路径不存在：{target}")
+    recursive = bool(params.get("recursive"))
+    if os.path.isdir(target) and not os.path.islink(target):
+        if not recursive and any(os.scandir(target)):
+            raise ValueError("目录非空：要递归删除必须显式传 recursive=true")
+        count, size = 0, 0
+        for root, dirs, files in os.walk(target):
+            for fn in files:
+                count += 1
+                try:
+                    size += os.path.getsize(os.path.join(root, fn))
+                except OSError:
+                    pass
+            count += len(dirs)
+        shutil.rmtree(target)
+        return {"path": target, "kind": "dir", "removed": count, "bytes": size,
+                "recursive": recursive}
+    size = os.path.getsize(target) if os.path.isfile(target) else 0
+    os.remove(target)
+    return {"path": target, "kind": "file", "removed": 1, "bytes": size, "recursive": False}
+
+
+def op_fs_move(params: dict) -> dict:
+    """移动 / 重命名。目标已存在时拒绝，避免静默覆盖。"""
+    src = _abs(params.get("from"))
+    dst = _abs(params.get("to"))
+    _guard_destructive(src)
+    if not os.path.exists(src):
+        raise ValueError(f"源路径不存在：{src}")
+    if os.path.exists(dst) and not params.get("overwrite"):
+        raise ValueError(f"目标已存在：{dst}（要覆盖请显式传 overwrite=true）")
+    os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)
+    shutil.move(src, dst)
+    return {"from": src, "to": dst, "overwritten": bool(params.get("overwrite"))}
+
+
 def run_task(method: str, params: dict) -> tuple[bool, dict, str | None]:
     try:
         if method == "screenshot":
@@ -397,6 +586,18 @@ def run_task(method: str, params: dict) -> tuple[bool, dict, str | None]:
             return True, op_input_type(params), None
         if method == "input.key":
             return True, op_input_key(params), None
+        if method == "input.drag":
+            return True, op_input_drag(params), None
+        if method == "input.scroll":
+            return True, op_input_scroll(params), None
+        if method == "fs.delete":
+            return True, op_fs_delete(params), None
+        if method == "fs.move":
+            return True, op_fs_move(params), None
+        if method == "app.list":
+            return True, op_app_list(params), None
+        if method == "app.launch":
+            return True, op_app_launch(params), None
         return False, {}, f"设备不支持的方法：{method}"
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or b"").decode("utf-8", "replace")[:300]

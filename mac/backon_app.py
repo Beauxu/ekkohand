@@ -45,7 +45,7 @@ MENUBAR_ICON = _res("MenuBar.png")
 DEFAULT_HUB = os.environ.get("HAND_HUB_URL", "http://47.88.53.79/hand")
 LOGIN_AGENT = os.path.expanduser("~/Library/LaunchAgents/cv.backpeng.backon.plist")
 BUNDLE_ID = "cv.backpeng.backon"
-APP_VERSION = "1.1.7"
+APP_VERSION = "1.1.8"
 LEGACY_AGENT_PLIST = os.path.expanduser("~/Library/LaunchAgents/cv.backpeng.ekkohand.plist")
 
 
