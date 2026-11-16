@@ -21,7 +21,9 @@ test -f assets/MenuBar.png || { echo "缺少 assets/MenuBar.png"; exit 1; }
 rm -rf build dist
 pyinstaller --noconfirm --clean Backon.spec
 
-# ad-hoc 签名：固定 identifier，重构建后 TCC 授权不会失效
+# ad-hoc 签名：固定 identifier 只保证升级不丢「配对状态」，
+# 但 TCC（屏幕录制/辅助功能）授权是按 cdhash 记的，每次重构建都会失效一次 ——
+# 所以 app 内做了权限探测与一键授权，别指望这里能免掉重新授权。
 codesign --force --deep --sign - --identifier cv.backpeng.backon dist/Backon.app
 
 ditto -c -k --keepParent dist/Backon.app dist/Backon-macOS.zip
