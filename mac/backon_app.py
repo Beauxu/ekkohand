@@ -45,7 +45,7 @@ MENUBAR_ICON = _res("MenuBar.png")
 DEFAULT_HUB = os.environ.get("HAND_HUB_URL", "http://47.88.53.79/hand")
 LOGIN_AGENT = os.path.expanduser("~/Library/LaunchAgents/cv.backpeng.backon.plist")
 BUNDLE_ID = "cv.backpeng.backon"
-APP_VERSION = "1.1.2"
+APP_VERSION = "1.1.3"
 LEGACY_AGENT_PLIST = os.path.expanduser("~/Library/LaunchAgents/cv.backpeng.ekkohand.plist")
 
 
@@ -150,6 +150,168 @@ def probe_screen_capture() -> tuple[bool, str]:
     return bool(raw), ""
 
 
+
+# ── 权限引导窗（拖拽授权，对齐豆包/Code 的交互）─────────────────
+# 实测痛点：用户在「辅助功能/屏幕录制」列表里找不到正确的条目、勾错副本、
+# 或勾完忘了重启。豆包/Code 的做法是弹一个浮窗，里面放可拖拽的 app 图标，
+# 拖进系统设置的列表区域 = 自动添加并勾选，比手动翻列表可靠得多。
+# 窗口底部带一行实时诊断（权限原始值/Quartz 是否加载/签名身份），
+# 授权一旦生效立刻变 ✅ 并给出「重启」按钮。
+
+
+def _app_path() -> str:
+    """当前运行中的 .app 路径（拖的就是它，保证授权对象 = 运行对象）。"""
+    if getattr(sys, "frozen", False):
+        # …/Backon.app/Contents/MacOS/Backon → …/Backon.app
+        return os.path.abspath(os.path.join(sys.executable, "..", "..", ".."))
+    return os.path.abspath(HERE)
+
+
+def open_perm_guide(kind: str) -> None:
+    try:
+        _open_perm_guide(kind)
+    except Exception as exc:  # noqa: BLE001
+        rumps.alert(
+            "引导窗打不开",
+            f"{type(exc).__name__}: {exc}\n\n"
+            "可以改用菜单里的「打开屏幕录制/辅助功能设置…」手动授权。",
+        )
+
+
+def _open_perm_guide(kind: str) -> None:
+    from AppKit import (  # noqa: PLC0415
+        NSApp, NSBackingStoreBuffered, NSButton, NSColor, NSFont, NSImageView,
+        NSMakeRect, NSPanel, NSTextField, NSWindowStyleMaskClosable,
+        NSWindowStyleMaskTitled, NSWorkspace,
+    )
+    from Foundation import NSObject, NSTimer, NSURL  # noqa: PLC0415
+
+    is_ax = kind == "ax"
+    title = "辅助功能" if is_ax else "屏幕录制"
+    pane = "Privacy_Accessibility" if is_ax else "Privacy_ScreenCapture"
+    check = accessibility_allowed if is_ax else screen_capture_allowed
+    app_path = _app_path()
+
+    class _DragIcon(NSImageView):  # 可拖拽的 app 图标
+        def mouseDown_(self, event):
+            from AppKit import NSDraggingItem  # noqa: PLC0415
+            url = NSURL.fileURLWithPath_(app_path)
+            item = NSDraggingItem.alloc().initWithPasteboardWriter_(url)
+            item.setDraggingFrame_contents_(self.bounds(), self.image())
+            self.beginDraggingSessionWithItems_event_source_([item], event, self)
+
+        def draggingSourceOperationMaskForLocal_(self, _local):
+            return 1  # copy
+
+    class _Ctrl(NSObject):
+        def openPane_(self, _sender):
+            open_privacy(pane)
+
+        def restart_(self, _sender):
+            argv = ([sys.executable] if getattr(sys, "frozen", False)
+                    else [sys.executable, os.path.join(HERE, "backon_app.py")])
+            subprocess.Popen(argv, close_fds=True, start_new_session=True)
+            rumps.quit_application()
+
+        def tick_(self, _timer):
+            val = check()
+            mark = {True: "✅ 已授权", False: "❌ 未授权", None: "？问不出来"}[val]
+            qtxt = "已加载" if _quartz() is not None else "缺失（打包问题，请截图这行发我）"
+            status.setStringValue_(
+                f"{title}：{mark}    Quartz 模块：{qtxt}\n"
+                f"版本 {APP_VERSION}    签名：{sign_identity()}\n"
+                f"授权对象：{app_path}"
+            )
+            if val is True and not self.granted:
+                self.granted = True
+                rbtn.setHidden_(False)
+                hint.setStringValue_("✅ 已检测到授权！点「重启 Backon」生效。")
+                rumps.notification("Backon", f"{title}已授权", "点引导窗里的「重启 Backon」完成")
+
+        def windowWillClose_(self, _note):
+            if timer_ref[0] is not None:
+                timer_ref[0].invalidate()
+                timer_ref[0] = None
+            if ctrl_ref[0] in _GUIDE_KEEP:
+                _GUIDE_KEEP.remove(ctrl_ref[0])
+
+    panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
+        NSMakeRect(0, 0, 560, 320),
+        NSWindowStyleMaskTitled | NSWindowStyleMaskClosable,
+        NSBackingStoreBuffered, False)
+    panel.setTitle_(f"给 Backon 授权：{title}")
+    panel.setFloatingPanel_(True)
+    panel.setLevel_(5)
+    panel.setReleasedWhenClosed_(False)
+    panel.center()
+    v = panel.contentView()
+
+    icon = _DragIcon.alloc().initWithFrame_(NSMakeRect(28, 150, 128, 128))
+    img = NSWorkspace.sharedWorkspace().iconForFile_(app_path)
+    img.setSize_((128, 128))
+    icon.setImage_(img)
+    v.addSubview_(icon)
+
+    def label(frame, text, size=13, bold=False):
+        tf = NSTextField.alloc().initWithFrame_(NSMakeRect(*frame))
+        tf.setStringValue_(text)
+        tf.setBezeled_(False)
+        tf.setDrawsBackground_(False)
+        tf.setEditable_(False)
+        tf.setSelectable_(True)
+        tf.setFont_(NSFont.boldSystemFontOfSize_(size) if bold else NSFont.systemFontOfSize_(size))
+        v.addSubview_(tf)
+        return tf
+
+    label((184, 258, 360, 22), f"把左边的 Backon 图标拖进「{title}」列表", 14, True)
+    label((184, 232, 360, 18), "① 点「打开设置页」（已自动打开）", 12)
+    label((184, 210, 360, 18), "② 把图标拖进列表区域 —— 会自动添加并勾选", 12)
+    label((184, 188, 360, 18), "③ 下面变 ✅ 后点「重启 Backon」", 12)
+    hint = label((184, 158, 360, 18), "正在监听授权状态…", 12)
+
+    btn = NSButton.alloc().initWithFrame_(NSMakeRect(184, 116, 150, 30))
+    btn.setTitle_("打开设置页")
+    btn.setBezelStyle_(1)
+
+    rbtn = NSButton.alloc().initWithFrame_(NSMakeRect(348, 116, 150, 30))
+    rbtn.setTitle_("重启 Backon")
+    rbtn.setBezelStyle_(1)
+    rbtn.setHidden_(True)
+
+    status = label((28, 28, 520, 78), "状态读取中…", 11)
+    status.setTextColor_(NSColor.secondaryLabelColor())
+
+    ctrl = _Ctrl.alloc().init()
+    ctrl.granted = False
+    ctrl_ref = [ctrl]
+    timer_ref = [None]
+    btn.setTarget_(ctrl)
+    btn.setAction_("openPane:")
+    rbtn.setTarget_(ctrl)
+    rbtn.setAction_("restart:")
+    v.addSubview_(btn)
+    v.addSubview_(rbtn)
+    panel.setDelegate_(ctrl)
+
+    _GUIDE_KEEP.append(ctrl)
+    _GUIDE_KEEP.append(panel)
+
+    NSApp.activateWithOptions_(2)  # NSApplicationActivateIgnoringOtherApps
+    panel.makeKeyAndOrderFront_(None)
+    open_privacy(pane)
+    if is_ax:
+        request_accessibility()
+    else:
+        request_screen_capture()
+    timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+        1.0, ctrl, "tick:", None, True)
+    timer_ref[0] = timer
+    ctrl.tick_(None)
+
+
+_GUIDE_KEEP = []
+
+
 class BackonApp(rumps.App):
     def __init__(self) -> None:
         super().__init__(
@@ -246,13 +408,18 @@ class BackonApp(rumps.App):
                 "① 在「屏幕录制」里勾上 Backon（删掉同名旧条目）",
                 "② 点菜单里的「重启 Backon（授权后必做）」",
             ]
-        lines += ["", "程序路径：" + sys.executable, "版本：" + APP_VERSION]
+        lines += ["", "程序路径：" + sys.executable, "版本：" + APP_VERSION,
+                  "", "接下来会弹出授权引导窗：把里面的 Backon 图标",
+                  "直接拖进设置的「屏幕录制」列表即可。"]
         rumps.alert("屏幕录制：没生效", "\n".join(lines))
+        open_perm_guide("screen")
 
     def act_perm_ax(self, _sender) -> None:
         if accessibility_allowed() is True:
             rumps.alert("辅助功能：可用", "已授权，模拟点击/键盘输入可以正常工作。")
             return
+        open_perm_guide("ax")
+        return
         granted = request_accessibility()
         self.refresh_perms()
         if granted:
@@ -500,6 +667,7 @@ class BackonApp(rumps.App):
             f"签名：{sign_identity()}",
             f"屏幕录制：{screen_capture_allowed()}",
             f"辅助功能：{accessibility_allowed()}",
+            f"Quartz 模块：{'已加载' if _quartz() is not None else '缺失（打包问题）'}",
             f"hub：{self.hub}",
             f"状态：{'已连接' if self.connected else '未连接'}"
             + (f"（{self.err}）" if self.err else ""),
