@@ -404,9 +404,11 @@ function Convert-El($el) {
     cx = [int]($r.X + $r.Width / 2); cy = [int]($r.Y + $r.Height / 2)
     patterns = @()
   }
+  $pat = @()
   foreach ($p in $c.GetSupportedPatterns()) {
-    $o.patterns += ($p.ProgrammaticName -replace '^Pattern\.', '')
+    $pat += ($p.ProgrammaticName -replace '^Pattern\.', '')
   }
+  $o.patterns = $pat
   return $o
 }
 """
@@ -436,7 +438,7 @@ function Walk($el, $d) {
       $child = Walk $ch ($d + 1)
       if ($child) { $kids += $child }
     }
-    if ($kids.Count -gt 0) { $node.children = $kids }
+    if ($kids.Count -gt 0) { $node['children'] = $kids }
   }
   return $node
 }
@@ -497,19 +499,19 @@ $action = $env:UIA_ACTION
 $value = $env:UIA_VALUE
 try {
   switch ($action) {
-    'invoke'   { ([System.Windows.Automation.InvokePattern]$el.GetCurrentPattern(
-                   [System.Windows.Automation.InvokePattern]::Pattern)).Invoke() }
-    'toggle'   { ([System.Windows.Automation.TogglePattern]$el.GetCurrentPattern(
-                   [System.Windows.Automation.TogglePattern]::Pattern)).Toggle() }
-    'select'   { ([System.Windows.Automation.SelectionItemPattern]$el.GetCurrentPattern(
-                   [System.Windows.Automation.SelectionItemPattern]::Pattern)).Select() }
-    'expand'   { ([System.Windows.Automation.ExpandCollapsePattern]$el.GetCurrentPattern(
-                   [System.Windows.Automation.ExpandCollapsePattern]::Pattern)).Expand() }
-    'collapse' { ([System.Windows.Automation.ExpandCollapsePattern]$el.GetCurrentPattern(
-                   [System.Windows.Automation.ExpandCollapsePattern]::Pattern)).Collapse() }
-    'set_value'{ ([System.Windows.Automation.ValuePattern]$el.GetCurrentPattern(
-                   [System.Windows.Automation.ValuePattern]::Pattern)).SetValue($value) }
-    'focus'    { $el.SetFocus() }
+    'invoke'    { [System.Windows.Automation.InvokePattern](
+                    $el.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)).Invoke() }
+    'toggle'    { [System.Windows.Automation.TogglePattern](
+                    $el.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)).Toggle() }
+    'select'    { [System.Windows.Automation.SelectionItemPattern](
+                    $el.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)).Select() }
+    'expand'    { [System.Windows.Automation.ExpandCollapsePattern](
+                    $el.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)).Expand() }
+    'collapse'  { [System.Windows.Automation.ExpandCollapsePattern](
+                    $el.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)).Collapse() }
+    'set_value' { [System.Windows.Automation.ValuePattern](
+                    $el.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)).SetValue($value) }
+    'focus'     { $el.SetFocus() }
     default    { throw "不认识的 action：$action（invoke/toggle/select/expand/collapse/set_value/focus）" }
   }
   @{ ok = $true; action = $action; target = (Convert-El $el) } |
