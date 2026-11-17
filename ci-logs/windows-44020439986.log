@@ -1,0 +1,83 @@
+run: 44020439986
+status: success
+--- log tail ---
+280 INFO: Module search paths (PYTHONPATH):
+['C:\\hostedtoolcache\\windows\\Python\\3.11.9\\x64\\Scripts\\pyinstaller.exe',
+ 'D:\\a\\ekkohand\\ekkohand',
+ 'C:\\hostedtoolcache\\windows\\Python\\3.11.9\\x64\\python311.zip',
+ 'C:\\hostedtoolcache\\windows\\Python\\3.11.9\\x64\\DLLs',
+ 'C:\\hostedtoolcache\\windows\\Python\\3.11.9\\x64\\Lib',
+ 'C:\\hostedtoolcache\\windows\\Python\\3.11.9\\x64',
+ 'C:\\hostedtoolcache\\windows\\Python\\3.11.9\\x64\\Lib\\site-packages',
+ 'D:\\a\\ekkohand\\ekkohand\\win',
+ 'D:\\a\\ekkohand\\ekkohand']
+484 INFO: Appending 'datas' from .spec
+484 INFO: checking Analysis
+484 INFO: Building Analysis because Analysis-00.toc is non existent
+484 INFO: Looking for Python shared library...
+484 INFO: Using Python shared library: C:\hostedtoolcache\windows\Python\3.11.9\x64\python311.dll
+484 INFO: Running Analysis Analysis-00.toc
+486 INFO: Target bytecode optimization level: 0
+486 INFO: Initializing module dependency graph...
+488 INFO: Initializing module graph hook caches...
+504 INFO: Analyzing modules for base_library.zip ...
+1152 INFO: Processing standard module hook 'hook-encodings.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.11.9\\x64\\Lib\\site-packages\\PyInstaller\\hooks'
+1800 INFO: Processing standard module hook 'hook-heapq.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.11.9\\x64\\Lib\\site-packages\\PyInstaller\\hooks'
+3372 INFO: Processing standard module hook 'hook-math.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.11.9\\x64\\Lib\\site-packages\\PyInstaller\\hooks'
+3475 INFO: Processing standard module hook 'hook-pickle.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.11.9\\x64\\Lib\\site-packages\\PyInstaller\\hooks'
+5103 INFO: Caching module dependency graph...
+5138 INFO: Analyzing D:\a\ekkohand\ekkohand\win\ekkohand_win.py
+5168 INFO: Processing pre-find-module-path hook 'hook-tkinter.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.11.9\\x64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_find_module_path'
+5170 INFO: TclTkInfo: initializing cached Tcl/Tk info...
+6060 INFO: Processing standard module hook 'hook-_tkinter.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.11.9\\x64\\Lib\\site-packages\\PyInstaller\\hooks'
+6214 INFO: Processing standard module hook 'hook-platform.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.11.9\\x64\\Lib\\site-packages\\PyInstaller\\hooks'
+6507 INFO: Processing standard module hook 'hook-PIL.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.11.9\\x64\\Lib\\site-packages\\PyInstaller\\hooks'
+6616 INFO: Processing standard module hook 'hook-PIL.Image.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.11.9\\x64\\Lib\\site-packages\\PyInstaller\\hooks'
+6894 INFO: Processing standard module hook 'hook-xml.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.11.9\\x64\\Lib\\site-packages\\PyInstaller\\hooks'
+6916 INFO: Processing standard module hook 'hook-xml.etree.cElementTree.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.11.9\\x64\\Lib\\site-packages\\PyInstaller\\hooks'
+7068 INFO: Processing standard module hook 'hook-PIL.ImageFilter.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.11.9\\x64\\Lib\\site-packages\\PyInstaller\\hooks'
+7281 INFO: Processing standard module hook 'hook-_ctypes.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.11.9\\x64\\Lib\\site-packages\\PyInstaller\\hooks'
+7293 INFO: Processing standard module hook 'hook-certifi.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.11.9\\x64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+7303 INFO: Processing standard module hook 'hook-pystray.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.11.9\\x64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+7550 INFO: Processing pre-safe-import-module hook 'hook-six.moves.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.11.9\\x64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+7603 INFO: Processing pre-safe-import-module hook 'hook-gi.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.11.9\\x64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+7646 INFO: Analyzing hidden import 'PIL.ImageTk'
+7651 INFO: Analyzing hidden import 'PIL._tkinter_finder'
+7653 INFO: Processing module hooks (post-graph stage)...
+7913 INFO: Processing standard module hook 'hook-PIL.SpiderImagePlugin.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.11.9\\x64\\Lib\\site-packages\\PyInstaller\\hooks'
+7994 INFO: Processing standard module hook 'hook-_tkinter.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.11.9\\x64\\Lib\\site-packages\\PyInstaller\\hooks'
+8004 INFO: Performing binary vs. data reclassification (927 entries)
+8536 INFO: Looking for ctypes DLLs
+8590 INFO: Analyzing run-time hooks ...
+8592 INFO: Including run-time hook 'pyi_rth_inspect.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.11.9\\x64\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+8595 INFO: Including run-time hook 'pyi_rth__tkinter.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.11.9\\x64\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+8618 INFO: Creating base_library.zip...
+8635 INFO: Looking for dynamic libraries
+8777 INFO: Extra DLL search directories (AddDllDirectory): []
+8777 INFO: Extra DLL search directories (PATH): []
+9480 INFO: Warnings written to D:\a\ekkohand\ekkohand\win\build\EkkoHand\warn-EkkoHand.txt
+9508 INFO: Graph cross-reference written to D:\a\ekkohand\ekkohand\win\build\EkkoHand\xref-EkkoHand.html
+9543 INFO: checking PYZ
+9543 INFO: Building PYZ because PYZ-00.toc is non existent
+9543 INFO: Building PYZ (ZlibArchive) D:\a\ekkohand\ekkohand\win\build\EkkoHand\PYZ-00.pyz
+9809 INFO: Building PYZ (ZlibArchive) D:\a\ekkohand\ekkohand\win\build\EkkoHand\PYZ-00.pyz completed successfully.
+9825 INFO: checking PKG
+9825 INFO: Building PKG because PKG-00.toc is non existent
+9825 INFO: Building PKG (CArchive) EkkoHand.pkg
+9851 INFO: Building PKG (CArchive) EkkoHand.pkg completed successfully.
+9851 INFO: Bootloader C:\hostedtoolcache\windows\Python\3.11.9\x64\Lib\site-packages\PyInstaller\bootloader\Windows-64bit-intel\runw.exe
+9851 INFO: checking EXE
+9851 INFO: Building EXE because EXE-00.toc is non existent
+9851 INFO: Building EXE from EXE-00.toc
+9852 INFO: Copying bootloader EXE to D:\a\ekkohand\ekkohand\win\build\EkkoHand\EkkoHand.exe
+9854 INFO: Copying icon to EXE
+9856 INFO: Copying 0 resources to EXE
+9856 INFO: Embedding manifest in EXE
+9859 INFO: Appending PKG archive to EXE
+9861 INFO: Fixing EXE headers
+9926 INFO: Building EXE from EXE-00.toc completed successfully.
+9933 INFO: checking COLLECT
+9933 INFO: Building COLLECT because COLLECT-00.toc is non existent
+9935 INFO: Building COLLECT COLLECT-00.toc
+10517 INFO: Building COLLECT COLLECT-00.toc completed successfully.
+10535 INFO: Build complete! The results are available in: D:\a\ekkohand\ekkohand\win\dist
