@@ -50,6 +50,26 @@ jobs:
             echo "没有 ANDROID_KEYSTORE_B64，退回 debug 签名（升级安装需先卸载）"
           fi
 
+      - name: Self-check release signing path
+        # 没有真实签名 secret 时，用临时 keystore 跑一遍 assembleRelease，
+        # 确认 signingConfig 分支本身是通的（否则配好 secret 才发现是脚本问题）。
+        if: env.SIGNED != '1'
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ github.workspace }}/android/app/release-selftest.p12
+          ANDROID_KEYSTORE_PASSWORD: selftest123
+          ANDROID_KEY_ALIAS: ekkohand
+        run: |
+          exec > >(tee -a "$RUNNER_TEMP/ci.log") 2>&1
+          keytool -genkeypair -keystore app/release-selftest.p12 -storetype PKCS12 \
+            -storepass selftest123 -keypass selftest123 -alias ekkohand \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=EkkoHand Selftest, O=Backpeng"
+          gradle --no-daemon assembleRelease
+          test -f app/build/outputs/apk/release/app-release.apk
+          echo "release 签名链路 OK（临时 key，仅自检）"
+          rm -f app/release-selftest.p12
+
       - name: Build APK
         working-directory: android
         env:
