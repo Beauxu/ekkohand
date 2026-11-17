@@ -6,7 +6,7 @@ plugins {
 // release 签名：CI 里由 secrets 解码出 .p12 并设置 ANDROID_KEYSTORE_PATH。
 // 本地没有 key 时自动退回 debug 签名，不会让构建失败。
 val ksPath = System.getenv("ANDROID_KEYSTORE_PATH")
-val ksFile = ksPath?.let { java.io.File(it) }
+val ksFile = ksPath?.let { file(it) }
 val hasReleaseKey = ksFile != null && ksFile.exists()
 
 android {
