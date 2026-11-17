@@ -88,6 +88,17 @@ jobs:
           sha256sum EkkoHand-android.apk | tee SHA256.txt
           ls -lh EkkoHand-android.apk
 
+      - name: Verify release signature
+        # 配好 secret 后确认签名者真的是我们的证书，而不是悄悄退回 debug
+        if: env.SIGNED == '1'
+        working-directory: android
+        run: |
+          exec >> "$RUNNER_TEMP/ci.log" 2>&1
+          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          AS="$(ls "$SDK"/build-tools/*/apksigner 2>/dev/null | head -1)"
+          "$AS" verify --print-certs EkkoHand-android.apk | head -8
+          echo "release 签名者已核对"
+
       - uses: actions/upload-artifact@v4
         with:
           name: EkkoHand-Android
