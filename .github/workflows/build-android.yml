@@ -90,7 +90,8 @@ jobs:
           git config user.name ci
           git add -f ci-logs
           git commit -m "ci: android diagnostics" || true
-          git push origin HEAD:refs/heads/ci-log --force || true
+          # 独立分支：mac 的 build.yml 也写 ci-log，共用会被互相 force push 覆盖
+          git push origin HEAD:refs/heads/ci-log-android --force || true
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')

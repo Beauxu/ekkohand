@@ -29,7 +29,7 @@ jobs:
           git config user.name ci
           git add -f ci-logs/heartbeat.log
           git commit -m "ci: heartbeat $GITHUB_RUN_ID" || true
-          git push origin HEAD:refs/heads/ci-log --force || echo "heartbeat push failed"
+          git push origin HEAD:refs/heads/ci-log-mac --force || echo "heartbeat push failed"
 
       - uses: actions/setup-python@v5
         with:
@@ -166,7 +166,7 @@ jobs:
           git config user.name ci
           git add -f ci-logs
           git commit -m "ci: diagnostics" || true
-          git push origin HEAD:refs/heads/ci-log --force
+          git push origin HEAD:refs/heads/ci-log-mac --force
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
