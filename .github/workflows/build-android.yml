@@ -37,18 +37,36 @@ jobs:
           fi
           echo "ANDROID_HOME=$SDK"
 
-      - name: Build debug APK
+      - name: Prepare signing key
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > android/release.p12
+            echo "SIGNED=1" >> "$GITHUB_ENV"
+            echo "使用 release 签名密钥"
+          else
+            echo "SIGNED=0" >> "$GITHUB_ENV"
+            echo "没有 ANDROID_KEYSTORE_B64，退回 debug 签名（升级安装需先卸载）"
+          fi
+
+      - name: Build APK
         working-directory: android
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ github.workspace }}/android/release.p12
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
           exec > >(tee -a "$RUNNER_TEMP/ci.log") 2>&1
-          gradle --no-daemon assembleDebug
-          ls -lh app/build/outputs/apk/debug/
-
-      - name: Package
-        working-directory: android
-        run: |
-          cp app/build/outputs/apk/debug/app-debug.apk EkkoHand-android.apk
+          if [ "$SIGNED" = "1" ]; then
+            gradle --no-daemon assembleRelease
+            cp app/build/outputs/apk/release/app-release.apk EkkoHand-android.apk
+          else
+            gradle --no-daemon assembleDebug
+            cp app/build/outputs/apk/debug/app-debug.apk EkkoHand-android.apk
+          fi
           sha256sum EkkoHand-android.apk | tee SHA256.txt
+          ls -lh EkkoHand-android.apk
 
       - uses: actions/upload-artifact@v4
         with:
@@ -83,7 +101,7 @@ jobs:
             android/SHA256.txt
           generate_release_notes: true
           body: |
-            Android 客户端（APK，arm64/armv7 通用，debug 签名）。
+            Android 客户端（APK，arm64/armv7 通用；配了签名 secret 时是 release 签名，可覆盖升级）。
 
             安装后：
             1. 打开 EkkoHand，输入工作台生成的 6 位配对码；

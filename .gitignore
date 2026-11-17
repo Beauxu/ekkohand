@@ -1,2 +1,6 @@
 __pycache__/
 *.pyc
+android/signing/
+android/release.p12
+android/**/build/
+android/.gradle/

@@ -44,7 +44,7 @@ LEGACY_STATE = os.path.expanduser("~/.ekkohand/device.json")  # 旧名时期的�
 STATE_PATH = DEFAULT_STATE
 POLL_WAIT = 25.0
 # 心跳里上报的版本号：CI 打包时用 BACKON_VERSION 注入 tag，本地跑就用默认值。
-APP_VERSION = os.environ.get("BACKON_VERSION") or "1.1.8"
+APP_VERSION = os.environ.get("BACKON_VERSION") or "1.1.9"
 
 
 def _default_log_path() -> str:
@@ -349,6 +349,337 @@ def _win_input() -> _WinInput:
         _WIN_INPUT = _WinInput()
     return _WIN_INPUT
 
+# ── Windows 控件级定位（UIA）──────────────────────────────────
+# 坐标点击在 DPI/缩放变化时会飘，也不认识“按钮叫什么”。UIA 能按名字 /
+# AutomationId 找到控件，拿准确矩形再点，或者直接 Invoke。
+# 实现借系统自带的 .NET UIA（PowerShell 5.1 里 Add-Type 即可），
+# 不引 pywinauto / pywin32，打包体积不变。
+_PS_PRELUDE = r"""$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+
+function Get-Target([int]$procId, [string]$title) {
+  $root = [System.Windows.Automation.AutomationElement]::RootElement
+  if ($procId -gt 0) {
+    $cond = New-Object System.Windows.Automation.PropertyCondition(
+      [System.Windows.Automation.AutomationElement]::ProcessIdProperty, $procId)
+    $hit = $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $cond)
+    if ($hit) { return $hit }
+  }
+  if ($title) {
+    foreach ($w in $root.FindAll([System.Windows.Automation.TreeScope]::Children,
+             [System.Windows.Automation.Condition]::TrueCondition)) {
+      if ($w.Current.Name -like "*$title*") { return $w }
+    }
+  }
+  return $null
+}
+
+function Get-MatchCond([string]$name, [string]$aid) {
+  $list = New-Object System.Collections.ArrayList
+  if ($name) {
+    [void]$list.Add((New-Object System.Windows.Automation.PropertyCondition(
+      [System.Windows.Automation.AutomationElement]::NameProperty, $name)))
+  }
+  if ($aid) {
+    [void]$list.Add((New-Object System.Windows.Automation.PropertyCondition(
+      [System.Windows.Automation.AutomationElement]::AutomationIdProperty, $aid)))
+  }
+  if ($list.Count -eq 0) { return [System.Windows.Automation.Condition]::TrueCondition }
+  if ($list.Count -eq 1) { return $list[0] }
+  $arr = $list.ToArray()
+  return New-Object System.Windows.Automation.AndCondition([System.Windows.Automation.Condition[]]$arr)
+}
+
+function Convert-El($el) {
+  $c = $el.Current
+  $r = $c.BoundingRectangle
+  $o = [ordered]@{
+    name = $c.Name
+    control_type = ($c.ControlType.ProgrammaticName -replace '^ControlType\.', '')
+    automation_id = $c.AutomationId
+    class = $c.ClassName
+    enabled = $c.IsEnabled
+    x = [int]$r.X; y = [int]$r.Y; w = [int]$r.Width; h = [int]$r.Height
+    cx = [int]($r.X + $r.Width / 2); cy = [int]($r.Y + $r.Height / 2)
+    patterns = @()
+  }
+  foreach ($p in $c.GetSupportedPatterns()) {
+    $o.patterns += ($p.ProgrammaticName -replace '^Pattern\.', '')
+  }
+  return $o
+}
+"""
+
+_PS_TREE = _PS_PRELUDE + r"""
+$out = $env:UIA_OUT
+$procId = 0; [void][int]::TryParse($env:UIA_PID, [ref]$procId)
+$depth = 3; [void][int]::TryParse($env:UIA_DEPTH, [ref]$depth)
+$maxNodes = 400; [void][int]::TryParse($env:UIA_MAXNODES, [ref]$maxNodes)
+
+$target = Get-Target $procId $env:UIA_TITLE
+if (-not $target) {
+  @{ error = '没找到窗口：先用 window.list 看 pid/title（标题支持模糊匹配）' } |
+    ConvertTo-Json -Compress | Out-File -LiteralPath $out -Encoding utf8
+  exit 0
+}
+
+$script:count = 0
+function Walk($el, $d) {
+  if ($script:count -ge $maxNodes) { return $null }
+  $script:count++
+  $node = Convert-El $el
+  if ($d -lt $depth) {
+    $kids = @()
+    foreach ($ch in $el.FindAll([System.Windows.Automation.TreeScope]::Children,
+             [System.Windows.Automation.Condition]::TrueCondition)) {
+      $child = Walk $ch ($d + 1)
+      if ($child) { $kids += $child }
+    }
+    if ($kids.Count -gt 0) { $node.children = $kids }
+  }
+  return $node
+}
+
+$tree = Walk $target 0
+@{ window = @{ name = $target.Current.Name; pid = $target.Current.ProcessId };
+   nodes = $script:count; tree = $tree } |
+  ConvertTo-Json -Depth 24 -Compress | Out-File -LiteralPath $out -Encoding utf8
+"""
+
+_PS_FIND = _PS_PRELUDE + r"""
+$out = $env:UIA_OUT
+$procId = 0; [void][int]::TryParse($env:UIA_PID, [ref]$procId)
+$limit = 20; [void][int]::TryParse($env:UIA_LIMIT, [ref]$limit)
+$wantType = $env:UIA_CT
+
+$target = Get-Target $procId $env:UIA_TITLE
+if (-not $target) {
+  @{ error = '没找到窗口：先用 window.list 看 pid/title' } |
+    ConvertTo-Json -Compress | Out-File -LiteralPath $out -Encoding utf8
+  exit 0
+}
+
+$cond = Get-MatchCond $env:UIA_NAME $env:UIA_AID
+$hits = $target.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond)
+$rows = @()
+foreach ($h in $hits) {
+  $o = Convert-El $h
+  if ($wantType -and $o.control_type -ne $wantType) { continue }
+  $rows += $o
+  if ($rows.Count -ge $limit) { break }
+}
+@{ window = @{ name = $target.Current.Name; pid = $target.Current.ProcessId };
+   count = $rows.Count; matches = $rows } |
+  ConvertTo-Json -Depth 6 -Compress | Out-File -LiteralPath $out -Encoding utf8
+"""
+
+_PS_INVOKE = _PS_PRELUDE + r"""
+$out = $env:UIA_OUT
+$procId = 0; [void][int]::TryParse($env:UIA_PID, [ref]$procId)
+
+$target = Get-Target $procId $env:UIA_TITLE
+if (-not $target) {
+  @{ error = '没找到窗口：先用 window.list 看 pid/title' } |
+    ConvertTo-Json -Compress | Out-File -LiteralPath $out -Encoding utf8
+  exit 0
+}
+
+$cond = Get-MatchCond $env:UIA_NAME $env:UIA_AID
+$el = $target.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $cond)
+if (-not $el) {
+  @{ error = '没找到控件：ui.find 里能看到候选，Name/AutomationId 要精确匹配' } |
+    ConvertTo-Json -Compress | Out-File -LiteralPath $out -Encoding utf8
+  exit 0
+}
+
+$action = $env:UIA_ACTION
+$value = $env:UIA_VALUE
+try {
+  switch ($action) {
+    'invoke'   { ([System.Windows.Automation.InvokePattern]$el.GetCurrentPattern(
+                   [System.Windows.Automation.InvokePattern]::Pattern)).Invoke() }
+    'toggle'   { ([System.Windows.Automation.TogglePattern]$el.GetCurrentPattern(
+                   [System.Windows.Automation.TogglePattern]::Pattern)).Toggle() }
+    'select'   { ([System.Windows.Automation.SelectionItemPattern]$el.GetCurrentPattern(
+                   [System.Windows.Automation.SelectionItemPattern]::Pattern)).Select() }
+    'expand'   { ([System.Windows.Automation.ExpandCollapsePattern]$el.GetCurrentPattern(
+                   [System.Windows.Automation.ExpandCollapsePattern]::Pattern)).Expand() }
+    'collapse' { ([System.Windows.Automation.ExpandCollapsePattern]$el.GetCurrentPattern(
+                   [System.Windows.Automation.ExpandCollapsePattern]::Pattern)).Collapse() }
+    'set_value'{ ([System.Windows.Automation.ValuePattern]$el.GetCurrentPattern(
+                   [System.Windows.Automation.ValuePattern]::Pattern)).SetValue($value) }
+    'focus'    { $el.SetFocus() }
+    default    { throw "不认识的 action：$action（invoke/toggle/select/expand/collapse/set_value/focus）" }
+  }
+  @{ ok = $true; action = $action; target = (Convert-El $el) } |
+    ConvertTo-Json -Depth 6 -Compress | Out-File -LiteralPath $out -Encoding utf8
+} catch {
+  @{ error = $_.Exception.Message } |
+    ConvertTo-Json -Compress | Out-File -LiteralPath $out -Encoding utf8
+}
+"""
+
+
+def _ps_uia(script: str, env: dict[str, str], timeout: int = 45) -> dict:
+    """跑一段 PowerShell 并读回它写的 JSON。powershell.exe 是 5.1（.NET UIA 就在里面）。"""
+    fd, ps1 = tempfile.mkstemp(suffix=".ps1")
+    os.close(fd)
+    out_fd, out_json = tempfile.mkstemp(suffix=".json")
+    os.close(out_fd)
+    try:
+        with open(ps1, "w", encoding="utf-8-sig") as fh:   # BOM：PowerShell 5.1 才按 UTF-8 解析
+            fh.write(script)
+        full_env = {**os.environ, **env, "UIA_OUT": out_json}
+        proc = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive",
+             "-ExecutionPolicy", "Bypass", "-File", ps1],
+            env=full_env, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=timeout,
+        )
+        try:
+            with open(out_json, encoding="utf-8-sig") as fh:
+                raw = fh.read().strip()
+        except OSError:
+            raw = ""
+        if not raw:
+            tail = [ln for ln in (proc.stderr or "").strip().splitlines() if ln][-3:]
+            raise RuntimeError("UIA 没有返回结果：" + ("; ".join(tail) or "PowerShell 无输出"))
+        data = json.loads(raw)
+        if data.get("error"):
+            raise RuntimeError(str(data["error"]))
+        return data
+    finally:
+        for path in (ps1, out_json):
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+
+def _uia_target_env(params: dict) -> dict[str, str]:
+    env: dict[str, str] = {}
+    pid = params.get("pid")
+    if pid:
+        env["UIA_PID"] = str(int(pid))
+    title = params.get("title") or params.get("window_title")
+    if title:
+        env["UIA_TITLE"] = str(title)
+    if not env:
+        raise ValueError("需要 pid 或 title 指定窗口；先用 window.list 看有哪些窗口")
+    return env
+
+
+def op_window_list(params: dict) -> dict:
+    if platform.system() != "Windows":
+        raise ValueError("window.list 只在 Windows 上可用")
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+
+    def proc_name(pid: int) -> str:
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return ""
+        try:
+            buf = ctypes.create_unicode_buffer(1024)
+            size = wintypes.DWORD(len(buf))
+            if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+                return os.path.basename(buf.value)
+        finally:
+            kernel32.CloseHandle(handle)
+        return ""
+
+    WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    rows: list[dict] = []
+
+    def callback(hwnd, _lparam):
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        length = user32.GetWindowTextLengthW(hwnd)
+        if not length:
+            return True
+        buf = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buf, length + 1)
+        title = buf.value.strip()
+        if not title:
+            return True
+        cls = ctypes.create_unicode_buffer(256)
+        user32.GetClassNameW(hwnd, cls, 256)
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        rect = wintypes.RECT()
+        user32.GetWindowRect(hwnd, ctypes.byref(rect))
+        rows.append({
+            "handle": int(hwnd),
+            "title": title,
+            "class": cls.value,
+            "pid": int(pid.value),
+            "process": proc_name(int(pid.value)),
+            "rect": {"x": rect.left, "y": rect.top,
+                     "w": rect.right - rect.left, "h": rect.bottom - rect.top},
+            "minimized": bool(user32.IsIconic(hwnd)),
+        })
+        return True
+
+    user32.EnumWindows(WNDENUMPROC(callback), 0)
+    fg = int(user32.GetForegroundWindow())
+    for row in rows:
+        row["foreground"] = row["handle"] == fg
+    query = str(params.get("query") or "").lower()
+    if query:
+        rows = [r for r in rows
+                if query in r["title"].lower() or query in r["process"].lower()]
+    rows.sort(key=lambda r: (not r["foreground"], r["title"].lower()))
+    return {"windows": rows, "total": len(rows)}
+
+
+def op_ui_tree(params: dict) -> dict:
+    if platform.system() != "Windows":
+        raise ValueError("ui.tree 只在 Windows 上可用")
+    env = _uia_target_env(params)
+    env["UIA_DEPTH"] = str(max(1, min(int(params.get("depth") or 3), 8)))
+    env["UIA_MAXNODES"] = str(max(20, min(int(params.get("max_nodes") or 400), 3000)))
+    data = _ps_uia(_PS_TREE, env)
+    return {"window": data.get("window"), "nodes": data.get("nodes"), "tree": data.get("tree")}
+
+
+def op_ui_find(params: dict) -> dict:
+    if platform.system() != "Windows":
+        raise ValueError("ui.find 只在 Windows 上可用")
+    name = str(params.get("name") or "")
+    aid = str(params.get("automation_id") or "")
+    if not name and not aid:
+        raise ValueError("至少给 name 或 automation_id；不知道叫什么就先 ui.tree 看一眼")
+    env = _uia_target_env(params)
+    env["UIA_NAME"] = name
+    env["UIA_AID"] = aid
+    env["UIA_CT"] = str(params.get("control_type") or "")
+    env["UIA_LIMIT"] = str(max(1, min(int(params.get("limit") or 20), 200)))
+    data = _ps_uia(_PS_FIND, env)
+    return {"window": data.get("window"), "count": data.get("count"),
+            "matches": data.get("matches") or []}
+
+
+def op_ui_invoke(params: dict) -> dict:
+    if platform.system() != "Windows":
+        raise ValueError("ui.invoke 只在 Windows 上可用")
+    name = str(params.get("name") or "")
+    aid = str(params.get("automation_id") or "")
+    if not name and not aid:
+        raise ValueError("至少给 name 或 automation_id，否则不知道点哪个")
+    action = str(params.get("action") or "invoke").lower()
+    env = _uia_target_env(params)
+    env["UIA_NAME"] = name
+    env["UIA_AID"] = aid
+    env["UIA_ACTION"] = action
+    env["UIA_VALUE"] = str(params.get("value") or "")
+    return _ps_uia(_PS_INVOKE, env)
+
 
 def _abs(path) -> str:
     raw = str(path or "~").strip() or "~"
@@ -381,6 +712,9 @@ def caps() -> list[str]:
            "script.run", "app.list", "app.launch"]
     if _input_backend():
         out += ["input.click", "input.type", "input.key", "input.drag", "input.scroll"]
+    if platform.system() == "Windows":
+        # 坐标点击会飘；这三个让模型能按控件名定位、直接触发
+        out += ["window.list", "ui.tree", "ui.find", "ui.invoke"]
     return out
 
 
@@ -845,6 +1179,14 @@ def run_task(method: str, params: dict) -> tuple[bool, dict, str | None]:
             return True, op_input_drag(params), None
         if method == "input.scroll":
             return True, op_input_scroll(params), None
+        if method == "window.list":
+            return True, op_window_list(params), None
+        if method == "ui.tree":
+            return True, op_ui_tree(params), None
+        if method == "ui.find":
+            return True, op_ui_find(params), None
+        if method == "ui.invoke":
+            return True, op_ui_invoke(params), None
         if method == "fs.delete":
             return True, op_fs_delete(params), None
         if method == "fs.move":
