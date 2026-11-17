@@ -1,0 +1,110 @@
+run: 43984603364
+ref: refs/heads/main
+sha: a6cb84747230fd271e048eb314aca053b8c6d7dd
+job status: success
+SIGN_IDENTITY=Backon Code Signing
+--- log tail ---
+2026-11-17 00:04:39.179 Python[1211:6832] PyObjC: Exception during dealloc of proxy: -[NSImageView _setIgnoreFocusEngine:]: unrecognized selector sent to instance 0x12df684b0
+2026-11-17 00:04:39.181 Python[1211:6832] PyObjC: Exception during dealloc of proxy: -[NSButton _setIgnoreFocusEngine:]: unrecognized selector sent to instance 0x12df68d10
+2026-11-17 00:04:39.181 Python[1211:6832] PyObjC: Exception during dealloc of proxy: -[NSTextField _setIgnoreFocusEngine:]: unrecognized selector sent to instance 0x12df68f90
+AXIsProcessTrusted() = True (来自 ApplicationServices)
+SMOKE OK：引导窗用到的 AppKit API 全部存在
+P12_BYTES=2636
+P12_SHA256=127248e7b78e125062d510497bec6ca585549b7a417a6f60b79b3f0290a5f95a
+PASS_LEN=24
+PASS_SHA8=bff5da1c
+1 identity imported.
+  1) 1F87C44B50518501E90035FD7AB2C579C58A8B16 "Backon Code Signing"
+     1 valid identities found
+36 INFO: PyInstaller: 6.22.3, contrib hooks: 2026.10
+36 INFO: Python: 3.11.9
+63 INFO: Platform: macOS-26.7.2-arm64-arm-64bit
+64 INFO: Python environment: /Library/Frameworks/Python.framework/Versions/3.11
+67 INFO: Removing temporary files and cleaning cache in /Users/runner/Library/Application Support/pyinstaller
+70 INFO: Module search paths (PYTHONPATH):
+['/Library/Frameworks/Python.framework/Versions/3.11/lib/python311.zip',
+ '/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11',
+ '/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/lib-dynload',
+ '/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages',
+ '/Users/runner/work/ekkohand/ekkohand/mac',
+ '/Users/runner/work/ekkohand/ekkohand']
+182 INFO: Appending 'datas' from .spec
+182 INFO: checking Analysis
+183 INFO: Building Analysis because Analysis-00.toc is non existent
+183 INFO: Looking for Python shared library...
+185 INFO: Using Python shared library: /Library/Frameworks/Python.framework/Versions/3.11/Python
+185 INFO: Running Analysis Analysis-00.toc
+185 INFO: Target bytecode optimization level: 0
+185 INFO: Initializing module dependency graph...
+186 INFO: Initializing module graph hook caches...
+191 INFO: Analyzing modules for base_library.zip ...
+610 INFO: Processing standard module hook 'hook-heapq.py' from '/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/PyInstaller/hooks'
+652 INFO: Processing standard module hook 'hook-encodings.py' from '/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/PyInstaller/hooks'
+1391 INFO: Processing standard module hook 'hook-math.py' from '/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/PyInstaller/hooks'
+1476 INFO: Processing standard module hook 'hook-pickle.py' from '/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/PyInstaller/hooks'
+2158 INFO: Caching module dependency graph...
+2177 INFO: Analyzing /Users/runner/work/ekkohand/ekkohand/mac/backon_app.py
+2207 INFO: Processing standard module hook 'hook-platform.py' from '/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/PyInstaller/hooks'
+2221 INFO: Processing standard module hook 'hook-xml.py' from '/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/PyInstaller/hooks'
+2504 INFO: Processing standard module hook 'hook-_ctypes.py' from '/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/PyInstaller/hooks'
+2684 INFO: Processing standard module hook 'hook-xml.etree.cElementTree.py' from '/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/PyInstaller/hooks'
+3305 INFO: Processing standard module hook 'hook-certifi.py' from '/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/_pyinstaller_hooks_contrib/stdhooks'
+3473 INFO: Analyzing hidden import 'ApplicationServices'
+3497 INFO: Processing module hooks (post-graph stage)...
+3533 INFO: Performing binary vs. data reclassification (6 entries)
+3546 INFO: Looking for ctypes DLLs
+3573 INFO: Analyzing run-time hooks ...
+3574 INFO: Including run-time hook 'pyi_rth_inspect.py' from '/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/PyInstaller/hooks/rthooks'
+3576 INFO: Including run-time hook 'pyi_rth_pkgutil.py' from '/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/PyInstaller/hooks/rthooks'
+3578 INFO: Creating base_library.zip...
+3588 INFO: Looking for dynamic libraries
+3833 INFO: Warnings written to /Users/runner/work/ekkohand/ekkohand/mac/build/Backon/warn-Backon.txt
+3842 INFO: Graph cross-reference written to /Users/runner/work/ekkohand/ekkohand/mac/build/Backon/xref-Backon.html
+3913 INFO: checking PYZ
+3913 INFO: Building PYZ because PYZ-00.toc is non existent
+3913 INFO: Building PYZ (ZlibArchive) /Users/runner/work/ekkohand/ekkohand/mac/build/Backon/PYZ-00.pyz
+4148 INFO: Building PYZ (ZlibArchive) /Users/runner/work/ekkohand/ekkohand/mac/build/Backon/PYZ-00.pyz completed successfully.
+4151 INFO: EXE target arch: arm64
+4151 INFO: Code signing identity: None
+4154 INFO: checking PKG
+4154 INFO: Building PKG because PKG-00.toc is non existent
+4154 INFO: Building PKG (CArchive) Backon.pkg
+4181 INFO: Building PKG (CArchive) Backon.pkg completed successfully.
+4188 INFO: Bootloader /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/PyInstaller/bootloader/Darwin-64bit/runw
+4189 INFO: checking EXE
+4189 INFO: Building EXE because EXE-00.toc is non existent
+4189 INFO: Building EXE from EXE-00.toc
+4189 INFO: Copying bootloader EXE to /Users/runner/work/ekkohand/ekkohand/mac/build/Backon/Backon
+4190 INFO: Converting EXE to target arch (arm64)
+4983 INFO: Removing signature(s) from EXE
+4998 INFO: Modifying Mach-O image UUID(s) in EXE
+5001 INFO: Appending PKG archive to EXE
+5002 INFO: Fixing EXE headers for code signing
+5007 INFO: Rewriting the executable's macOS SDK version (26.2.0) to match the SDK version of the Python library (12.1.0) in order to avoid inconsistent behavior and potential UI issues in the frozen application.
+5007 INFO: Re-signing the EXE
+5022 INFO: Building EXE from EXE-00.toc completed successfully.
+5023 INFO: checking COLLECT
+5023 INFO: Building COLLECT because COLLECT-00.toc is non existent
+5024 INFO: Building COLLECT COLLECT-00.toc
+8408 INFO: Building COLLECT COLLECT-00.toc completed successfully.
+8410 INFO: checking BUNDLE
+8410 INFO: Building BUNDLE because BUNDLE-00.toc is non existent
+8410 INFO: Building BUNDLE BUNDLE-00.toc
+10264 INFO: Signing the BUNDLE...
+10329 INFO: Building BUNDLE BUNDLE-00.toc completed successfully.
+10330 INFO: Build complete! The results are available in: /Users/runner/work/ekkohand/ekkohand/mac/dist
+dist/Backon.app: replacing existing signature
+--- 签名结果 ---
+Identifier=cv.backpeng.backon
+Authority=Backon Code Signing
+TeamIdentifier=not set
+VERIFY_OK
+created: /Users/runner/work/ekkohand/ekkohand/mac/dist/Backon.dmg
+00ef7cb4a47a6cb888aa3133d3aca0dea65e24dc4c61639249f22f292e061d6d  dist/Backon-macOS.zip
+7041674dd857d2b5655c11b8d93e27de80af63257043998d64c09938dbb8b90f  dist/Backon.dmg
+-rw-r--r--  1 runner  staff   9.3M Nov 17 00:04 dist/Backon-macOS.zip
+-rw-r--r--@ 1 runner  staff    10M Nov 17 00:05 dist/Backon.dmg
+ZIP_VERIFY_OK
+total 464
+-rwxr-xr-x  1 runner  staff   230K Nov 17 00:04 cacert.pem
+-rw-r--r--  1 runner  staff     0B Nov 17 00:04 py.typed
